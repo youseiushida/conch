@@ -24,10 +24,12 @@ Think of it as **"Playwright for Terminals"**.
 
 ## Installation
 
+> ⚠️ **Not yet published to npm.** Install from GitHub directly:
+
 ```bash
-npm install conch
+npm install github:youseiushida/conch
 # or
-pnpm add conch
+pnpm add github:youseiushida/conch
 ```
 
 ## Quick Start

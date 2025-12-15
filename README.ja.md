@@ -25,10 +25,12 @@ Conch（コンク）は、ターミナルアプリケーションをプログラ
 
 ## インストール
 
+> ⚠️ **まだnpmには公開されていません。** GitHubから直接インストールしてください：
+
 ```bash
-npm install conch
+npm install github:youseiushida/conch
 # or
-pnpm add conch
+pnpm add github:youseiushida/conch
 ```
 
 ## クイックスタート
