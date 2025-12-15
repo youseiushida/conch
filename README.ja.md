@@ -67,9 +67,9 @@ main();
 
 ## ドキュメント
 
-*   [**利用ガイド (USAGE.md)**](./USAGE.md): 詳細なコード例とベストプラクティス
-*   [**API リファレンス (API.md)**](./API.md): `ConchSession`, `LocalPty`, ユーティリティ関数の詳細仕様
-*   [**ソースコード解説 (src/README.md)**](./src/README.md): 内部アーキテクチャの解説
+*   [**利用ガイド (USAGE.md)**](./USAGE.ja.md): 詳細なコード例とベストプラクティス
+*   [**API リファレンス (API.md)**](./API.ja.md): `ConchSession`, `LocalPty`, ユーティリティ関数の詳細仕様
+*   [**ソースコード解説 (src/README.md)**](./src/README.ja.md): 内部アーキテクチャの解説
 
 ## ロードマップ
 
