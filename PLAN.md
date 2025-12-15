@@ -23,7 +23,7 @@
 ### memo
 - 設計方針: 依存性注入(DI)を採用。コンストラクタで `ITerminalBackend` インスタンスを受け取る。
 - 責務: バックエンド(Pty)とフロントエンド(xterm)のパイプライン接続を管理するコントローラー。
-- サイズ同期: 呼び出し側が責任を持ってバックエンドとセッション（xterm）に同じサイズ指定を行う前提とし、セッション内での強制同期は行わない。
+- サイズ同期: `ConchSession.resize(cols, rows)` を single source of truth とし、xterm と backend の両方を同期してリサイズする（最小値は 1 にクランプする）。
 
 ## 1-4. パイプラインの接続
 - [x] `IPty.onData` のイベントリスナー内で `Terminal.write` を呼び出す
@@ -54,7 +54,7 @@
 ### memo
 - **完了検知について**:
     - 本PoCでは「コマンド完了待ち」は実装しない（エージェントがスナップショットを見て判断するWait & See方式）。
-    - 将来的な拡張として、VSCodeのような「Shell Integration (OSC 133;A 等の不可視シーケンスによるプロンプト検知)」の導入を検討する。
+    - 将来的な拡張として、VSCodeのような「Shell Integration (OSC 133;A 等の不可視シーケンスによるプロンプト検知)」の導入を検討する（タスク6）。
 
 ## 2-4. `resize` メソッドの実装
 - [x] `ConchSession` に `resize(cols, rows)` を追加する
@@ -67,58 +67,132 @@
 - `LocalPty.write` および `resize` 内で `try-catch` し、例外発生時（プロセス終了後など）は `console.warn` でログ出力のみ行い、上位には伝播させない方針を採用。
 
 # タスク3: 「人間の景色」生成API (`Snapshot Engine`) の開発
+### memo
+- **レビュアー指摘反映**:
+    - `getSnapshot` に `formatter` 引数を追加し、行番号付与や色判定などの拡張性を確保する。
+    - バッファ範囲指定（`range: 'viewport' | 'all'`）を考慮する。
 
 ## 3-1. バッファ取得ロジックの実装
-- [ ] xterm の `buffer.active` から行データをループで取り出す基本ロジックを `getSnapshot()` に実装する
+- [x] `ConchSession` に `getSnapshot(options?: SnapshotOptions)` メソッドを追加する
+- [x] xterm の `buffer.active` から行データをループで取り出す基本ロジックを実装する
+- [x] `SnapshotOptions` に `formatter: (line: IBufferLine, y: number) => string` を定義する
 
 ## 3-2. 行レンダリングの調整
-- [ ] `line.translateToString()` のオプション引数 (`trimRight` 等) を検討する
-- [ ] 見た目を維持しつつ扱いやすい文字列形式を決定する
+- [x] `line.translateToString()` のオプション引数 (`trimRight` 等) を検討する
+- [x] デフォルトでは `trimRight: true` とし、見た目を維持しつつ扱いやすい文字列形式にする
 
-## 3-3. カーソル位置の取得
-- [ ] `buffer.active.cursorX`, `buffer.active.cursorY` を取得する
-- [ ] スナップショット取得時点でのカーソル座標を特定する
+## 3-3. カーソル位置とメタデータの取得
+- [x] `buffer.active.cursorX`, `buffer.active.cursorY` を取得する
+- [x] `isAlternateBuffer` (代替バッファ利用中かどうか) などのメタデータを取得する
+- [x] 戻り値を `{ text: string, cursor: { x, y }, meta: { isAlternate: boolean } }` の形にする
 
 ## 3-4. ビューポート制御 (スクロール対応)
-- [ ] 全バッファを返すのではなく、現在のビューポート（表示領域）や、指定した範囲の行だけを取得するオプション引数を追加する
+- [x] `SnapshotOptions` に `range` オプションを追加する
+- [x] デフォルトは「現在のビューポート」とし、オプションで全バッファ取得も可能にする
 
-## 3-5. 戻り値の構造化
-- [ ] 単純な文字列だけでなく、`{ text: string, cursor: { x, y }, ... }` というリッチなオブジェクトを返すように型定義と実装を修正する
+## 3-5. 戻り値の構造化と仕上げ
+- [x] 型定義 (`ISnapshot`, `SnapshotOptions`) を `types.ts` に集約する
+- [x] 実装を完了させ、動作確認用のログ出力を追加する
+
+# タスク3.5: 待機ユーティリティの実装 (Wait Utils)
+### memo
+- レビュアー指摘および ISSUE 対応: エージェント実装やTUI操作に必須となる待機ロジックを拡充した。
+
+## 3.5-1. `waitForText` の実装
+- [x] `src/utils.ts` を作成する
+- [x] `waitForText(session, regex, options)` を実装する（指定文字列が出るまでポーリング）
+- [x] 正規表現の `/g` フラグ対応など、`ISSUE.md` で指摘されたバグ修正を実施済み
+
+## 3.5-2. `waitForSilence` の実装
+- [x] `waitForSilence(session, duration)` を実装する（出力が止まるまで待つ）
+- [x] strictモードでの安全性向上を実施済み
+
+## 3.5-3. 画面変化による待機 (ISSUE対応) [NEW]
+- [x] `waitForChange(session, options?)` を実装する（スナップショット変化待ち）
+- [x] `waitForStable(session, duration)` を実装する（画面が落ち着くまで待つ）
+
+# タスク3.6: 高度な入力API (Input Simulation) [NEW]
+### memo
+- `ISSUE.md` 対応: TUI操作をより人間に近づけるための入力抽象化レイヤー。
+
+## 3.6-1. キー入力メソッドの実装
+- [x] `press(key: KeyName)`: キー名（Enter, Esc, ArrowUp等）による入力
+- [x] `type(text: string)`: 文字列のそのままの入力
+- [x] `chord(keys: string[])`: 同時押し（Ctrl+C等）
+
+## 3.6-2. キーマップの実装
+- [x] `src/keymap.ts` を作成し、キー名とエスケープシーケンスの変換表を定義
+
+# タスク3.7: Locatorプリミティブ (Locator Primitives) [NEW]
+### memo
+- `ISSUE.md` 対応: Playwrightライクな要素特定のための純粋関数群。
+
+## 3.7-1. 抽出ユーティリティの実装
+- [x] `cropText(snapshot, rect)`: テキストからの矩形抽出
+- [x] `findText(snapshot, query)`: 文字列/正規表現による座標検索
+
+# タスク3.8: パッケージ構成の整理 [NEW]
+### memo
+- `ISSUE.md` 対応: ライブラリとしての公開APIを明確化。
+
+## 3.8-1. エントリポイントの分離
+- [x] `src/index.ts` をライブラリの export ポイントに変更
+- [x] `ConchSession`, `LocalPty`, `utils` 等を export
+
+## 3.8-2. デモの移動
+- [x] 動作確認用コードを `examples/demo.ts` に移動
 
 # タスク4: Telnetサーバーの「介入・監視」機能の統合
 ### memo
-- このレイヤーは「Interaction Adapters」として位置づけられる。
-- Telnetだけでなく、MCP Server, WebSocket(Browser), VSCode IPCなども同列のアダプターとして実装可能。
-- `ConchSession` はこれらのアダプターに対して中立であるべき。
+- **レビュアー指摘反映**: アーキテクチャの根幹に関わる「イベント通知」と「整合性確保」を先行して実装する。
 
-## 4-1. イベントエミッターの整備
-- [ ] `ConchSession` に `onOutput(callback)` を追加する
-- [ ] ターミナル出力（PTYからの生データ）を外部にブロードキャストできるようにする
+## 4-0. 共通インターフェース基盤の設計 (Interaction Layer)
+- [ ] `ConchSession` が外部からの操作を受け入れるための抽象化レイヤーを設計する
+- [ ] `IInteractionHandler` (仮) のようなインターフェースを検討し、Telnet/WebSocket/MCP が共通して依存できる形にする
+- [ ] 入力ソース（Human vs Agent）のタグ付けや排他制御（TakeOver）の概念を設計に含める
+### memo
+- **案2 (InteractionManager/Proxy) を採用**:
+    - `ConchSession` はFatにせず、純粋なI/O装置として保つ。
+    - 外部接続（Telnet等）は `InteractionManager` 等の調停者を介して操作する。
+    - まずはインターフェース定義のみ行い、実装はタスク4-3以降で具体化する。
 
-## 4-2. Telnetサーバークラスの分離
-- [ ] `src/index.ts` のサーバー部分を `TelnetServer` クラスとして切り出す
+## 4-1. イベント駆動アーキテクチャの整備
+- [x] `ConchSession` に `onOutput(listener)` を実装し、PTYからの生データ（Raw Output）を購読可能にする
+- [x] `ConchSession` に `onExit(listener)` を実装し、バックエンド終了を通知できるようにする
+- [x] `flush` / `drain` の仕組みを実装する（xtermへの書き込み完了保証）
+### memo
+- `drain()` メソッドを実装済み。`Terminal.write` のコールバックを監視し、バッファ反映完了を `await` できるようにした。
+- これにより、`waitForText` などのポーリング前に `await session.drain()` することで、より確実なテストが可能になる。
+
+## 4-2. イベントエミッターの整備
+- [ ] `ConchSession` のイベント機能を使い、外部（Telnet等）へのブロードキャストを確認する
+
+## 4-3. Telnetサーバークラスの分離
+- [ ] `src/server/TelnetServer.ts` (仮) としてサーバークラスを作成する
 - [ ] 複数のクライアント接続を管理できるようにする
 
-## 4-3. 接続ハンドラーの実装
+## 4-4. 接続ハンドラーの実装
 - [ ] クライアント接続時に `ConchSession` の `onOutput` を購読し、セッションの出力をソケットに流す処理を書く
 
-## 4-4. 入力の割り込み処理
+## 4-5. 入力の割り込み処理
 - [ ] ソケットからの入力（人間が打ったキー）を `ConchSession.write()` に流し込み、エージェント操作と混在させる処理を書く
 
-## 4-5. Telnet特有の処理 (NVT)
+## 4-6. Telnet特有の処理 (NVT)
 - [ ] Windows/Telnetクライアント特有の改行コード変換を実装する
 - [ ] 基本的なTelnetネゴシエーション（ローカルエコーOFFなど）をサーバークラス内にカプセル化する
 
 # タスク5: 結合テスト（PoCデモ）の作成
 
-## 5-1. デモスクリプトの作成 (`examples/demo.ts`)
-- [ ] `ConchSession` と `TelnetServer` をインスタンス化し、連携させて起動するエントリーポイントを作る
+## 5-1. デモスクリプトの改修 (`examples/demo.ts`)
+- [x] 基本的な自動操作デモは作成済み
+- [ ] TelnetServer を組み込み、外部接続を受け入れる形に拡張する
 
-## 5-2. 自動操作シナリオの実装
-- [ ] `setTimeout` 等を使い、「起動 -> 3秒後に `ls` -> 3秒後に `top`」のように自動でコマンドを打つロジックを組む
+## 5-2. 自動操作シナリオの拡張
+- [x] `waitForStable` 等を使った堅牢なシナリオを実装済み
+- [ ] 対話型コマンド（TUIアプリ等）の操作シナリオを追加検討
 
 ## 5-3. スナップショット監視の実装
-- [ ] 定期的に `getSnapshot()` を呼び出し、コンソールに出力して「エージェントが見ている景色」が正しいか確認するループを作る
+- [x] デモ内で `getSnapshot()` の出力を確認済み
 
 ## 5-4. Telnet接続確認
 - [ ] デモ稼働中に手元のターミナルから接続し、自動操作の様子が見えるか確認する
@@ -126,4 +200,9 @@
 
 ## 5-5. ドキュメント整備とクリーンアップ
 - [ ] `README.md` に使い方を追記する
-- [ ] 不要になった `src/index.ts` の古いコードを削除またはアーカイブする
+- [x] `src/index.ts` の整理（実施済み）
+
+# タスク6: 高度なシェル統合と完了検知 (Future)
+### memo
+- OSC 133 (Shell Integration) のハンドラを実装し、コマンド完了イベントを正確に検知できるようにする。
+- アーキテクチャの大幅変更は不要で、`ConchSession` にパーサーフックを追加する形で実装可能。
