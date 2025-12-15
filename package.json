@@ -1,7 +1,7 @@
 {
   "name": "conch",
   "version": "1.0.0",
-  "description": "Headless Terminal Driver for TUI Testing & Automation",
+  "description": "Playwright for Terminals: A robust headless terminal driver for automating and testing TUI applications.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
@@ -14,7 +14,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/YoseiUshida/conch.git"
+    "url": "git+https://github.com/youseiushida/conch.git"
   },
   "keywords": [
     "terminal",

@@ -2,8 +2,8 @@
 
 > **Headless Terminal Driver for TUI Testing & Automation**
 
-[![CI](https://github.com/YoseiUshida/conch/workflows/CI/badge.svg)](https://github.com/YoseiUshida/conch/actions)
-![License](https://img.shields.io/github/license/YoseiUshida/conch)
+[![CI](https://github.com/youseiushida/conch/workflows/CI/badge.svg)](https://github.com/youseiushida/conch/actions)
+![License](https://img.shields.io/github/license/youseiushida/conch)
 
 [**🇯🇵 日本語ドキュメントはこちら**](./README.ja.md)
 
