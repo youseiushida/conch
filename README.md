@@ -66,8 +66,8 @@ main();
 
 ## Documentation
 
-*   [**Usage Guide (USAGE.md)**](./USAGE.md): Detailed examples and best practices.
-*   [**API Reference (API.md)**](./API.md): Complete API documentation for `ConchSession`, `LocalPty`, and utilities.
+*   [**Usage Guide (USAGE.md)**](./docs/USAGE.md): Detailed examples and best practices.
+*   [**API Reference (API.md)**](./docs/API.md): Complete API documentation for `ConchSession`, `LocalPty`, and utilities.
 *   [**Source Docs (src/README.md)**](./src/README.md): Internal architecture overview.
 
 ## Roadmap
