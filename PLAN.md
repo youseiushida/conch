@@ -1,9 +1,9 @@
-# タスク1: ターミナル管理クラス (`ConchSession`) の設計と実装
+# Development Roadmap
+
 
 ## 1-1. インターフェース定義 (`types.ts`)
 - [x] `IPty` (または `ITerminalBackend`) インターフェースを定義する
 - [x] `write`, `resize`, `onData`, `dispose` などの必須メソッドを決定する
-### memo
 - 必須メソッド: `write`(UTF-8 string), `resize`(cols, rows), `dispose`(終了/切断)
 - イベント: `onData`(stdout/stderr混合), `onExit`(終了コード)
 - ID: PIDだけでなくコンテナID等も考慮し `string | number`
@@ -12,7 +12,6 @@
 ## 1-2. 基底クラス/アダプター作成
 - [x] `node-pty` をラップして上記インターフェースに適合させる `LocalPty` クラスを作成する
 - [x] 将来的な Docker/SSH 対応を見据えた構造にする
-### memo
 - `LocalPty` は `node-pty` 専用アダプタであり、Docker/SSH等は別クラスで `ITerminalBackend` を実装する（継承関係ではない）。
 - コンストラクタ引数は `shell` と共通オプション `cols, rows, env, cwd` に絞り、`node-pty` への依存を隠蔽する。
 - Windows環境での `chcp 65001` (UTF-8化) は、ドメイン知識として `LocalPty` クラス内部（spawn直後）に隠蔽する。
@@ -20,7 +19,6 @@
 ## 1-3. セッションクラスの雛形作成 (`session.ts`)
 - [x] `ConchSession` クラスを作成する
 - [x] コンストラクタで `IPty` と `@xterm/headless` の `Terminal` インスタンスを初期化する
-### memo
 - 設計方針: 依存性注入(DI)を採用。コンストラクタで `ITerminalBackend` インスタンスを受け取る。
 - 責務: バックエンド(Pty)とフロントエンド(xterm)のパイプライン接続を管理するコントローラー。
 - サイズ同期: `ConchSession.resize(cols, rows)` を single source of truth とし、xterm と backend の両方を同期してリサイズする（最小値は 1 にクランプする）。
@@ -28,14 +26,12 @@
 ## 1-4. パイプラインの接続
 - [x] `IPty.onData` のイベントリスナー内で `Terminal.write` を呼び出す
 - [x] バックエンドの出力をヘッドレス端末に流し込む処理を実装する
-### memo
 - バック圧制御: 現状は無視。xterm.jsの内部キューに依存する。
 - パイプライン: `backend.onData` -> `terminal.write` の単純接続。
 
 ## 1-5. ライフサイクル管理
 - [x] `dispose()` メソッドを実装する
 - [x] プロセス、xtermインスタンス、イベントリスナーを適切に破棄・解除する処理を書く
-### memo
 - プロセス終了時: `ConchSession` は自動で破棄しない（ログ閲覧のため）。`dispose()` は明示的に呼び出す設計。
 
 # タスク2: プログラム向け操作API (`I/O Interface`) の実装
@@ -46,12 +42,10 @@
 
 ## 2-2. OS判定と改行コード定数の導入
 - [x] 実行環境 (Windows/Posix) に応じた改行コード (`\r` or `\n`) を保持する定数または設定を持たせる
-### memo
 - 以前の議論では `newline` プロパティの導入を検討したが、**入力（コマンド実行）においては `\r` (CR) が全OS共通で安全** であるため、一旦プロパティ化は見送り、`\r` 固定で実装する方針に変更（YAGNI）。
 
 ## 2-3. `execute` (コマンド実行) メソッドの実装
 - [x] 文字列を受け取り、末尾に適切な改行コードを付与して `write` を呼ぶコンビニエンスメソッドを作る
-### memo
 - **完了検知について**:
     - 本PoCでは「コマンド完了待ち」は実装しない（エージェントがスナップショットを見て判断するWait & See方式）。
     - 将来的な拡張として、VSCodeのような「Shell Integration (OSC 133;A 等の不可視シーケンスによるプロンプト検知)」の導入を検討する（タスク6）。
@@ -63,11 +57,9 @@
 ## 2-5. エラーハンドリング
 - [x] プロセスが既に終了している場合に書き込もうとした際の例外処理を追加する
 - [x] 必要であれば書き込みバッファ溢れの考慮を追加する
-### memo
 - `LocalPty.write` および `resize` 内で `try-catch` し、例外発生時（プロセス終了後など）は `console.warn` でログ出力のみ行い、上位には伝播させない方針を採用。
 
 # タスク3: 「人間の景色」生成API (`Snapshot Engine`) の開発
-### memo
 - **レビュアー指摘反映**:
     - `getSnapshot` に `formatter` 引数を追加し、行番号付与や色判定などの拡張性を確保する。
     - バッファ範囲指定（`range: 'viewport' | 'all'`）を考慮する。
@@ -95,7 +87,6 @@
 - [x] 実装を完了させ、動作確認用のログ出力を追加する
 
 # タスク3.5: 待機ユーティリティの実装 (Wait Utils)
-### memo
 - レビュアー指摘および ISSUE 対応: エージェント実装やTUI操作に必須となる待機ロジックを拡充した。
 
 ## 3.5-1. `waitForText` の実装
@@ -112,7 +103,6 @@
 - [x] `waitForStable(session, duration)` を実装する（画面が落ち着くまで待つ）
 
 # タスク3.6: 高度な入力API (Input Simulation) [NEW]
-### memo
 - `ISSUE.md` 対応: TUI操作をより人間に近づけるための入力抽象化レイヤー。
 
 ## 3.6-1. キー入力メソッドの実装
@@ -124,7 +114,6 @@
 - [x] `src/keymap.ts` を作成し、キー名とエスケープシーケンスの変換表を定義
 
 # タスク3.7: Locatorプリミティブ (Locator Primitives) [NEW]
-### memo
 - `ISSUE.md` 対応: Playwrightライクな要素特定のための純粋関数群。
 
 ## 3.7-1. 抽出ユーティリティの実装
@@ -132,7 +121,6 @@
 - [x] `findText(snapshot, query)`: 文字列/正規表現による座標検索
 
 # タスク3.8: パッケージ構成の整理 [NEW]
-### memo
 - `ISSUE.md` 対応: ライブラリとしての公開APIを明確化。
 
 ## 3.8-1. エントリポイントの分離
@@ -143,14 +131,12 @@
 - [x] 動作確認用コードを `examples/demo.ts` に移動
 
 # タスク4: Telnetサーバーの「介入・監視」機能の統合
-### memo
 - **レビュアー指摘反映**: アーキテクチャの根幹に関わる「イベント通知」と「整合性確保」を先行して実装する。
 
 ## 4-0. 共通インターフェース基盤の設計 (Interaction Layer)
 - [ ] `ConchSession` が外部からの操作を受け入れるための抽象化レイヤーを設計する
 - [ ] `IInteractionHandler` (仮) のようなインターフェースを検討し、Telnet/WebSocket/MCP が共通して依存できる形にする
 - [ ] 入力ソース（Human vs Agent）のタグ付けや排他制御（TakeOver）の概念を設計に含める
-### memo
 - **案2 (InteractionManager/Proxy) を採用**:
     - `ConchSession` はFatにせず、純粋なI/O装置として保つ。
     - 外部接続（Telnet等）は `InteractionManager` 等の調停者を介して操作する。
@@ -160,7 +146,6 @@
 - [x] `ConchSession` に `onOutput(listener)` を実装し、PTYからの生データ（Raw Output）を購読可能にする
 - [x] `ConchSession` に `onExit(listener)` を実装し、バックエンド終了を通知できるようにする
 - [x] `flush` / `drain` の仕組みを実装する（xtermへの書き込み完了保証）
-### memo
 - `drain()` メソッドを実装済み。`Terminal.write` のコールバックを監視し、バッファ反映完了を `await` できるようにした。
 - これにより、`waitForText` などのポーリング前に `await session.drain()` することで、より確実なテストが可能になる。
 
@@ -203,6 +188,5 @@
 - [x] `src/index.ts` の整理（実施済み）
 
 # タスク6: 高度なシェル統合と完了検知 (Future)
-### memo
 - OSC 133 (Shell Integration) のハンドラを実装し、コマンド完了イベントを正確に検知できるようにする。
 - アーキテクチャの大幅変更は不要で、`ConchSession` にパーサーフックを追加する形で実装可能。

@@ -1,8 +1,9 @@
 {
   "name": "conch",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Headless Terminal Driver for TUI Testing & Automation",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsup",
@@ -11,9 +12,27 @@
     "telnet": "chcp 65001 && telnet localhost 3007",
     "nc": "chcp 65001 && nc localhost 3007"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YoseiUshida/conch.git"
+  },
+  "keywords": [
+    "terminal",
+    "pty",
+    "xterm",
+    "headless",
+    "testing",
+    "automation",
+    "tui",
+    "bot",
+    "node-pty",
+    "xterm",
+    "xterm-headless",
+    "terminal-emulator",
+    "cli-testing"
+  ],
+  "author": "YoseiUshida",
+  "license": "MIT",
   "packageManager": "pnpm@10.7.1",
   "dependencies": {
     "@xterm/headless": "^5.5.0",

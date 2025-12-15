@@ -1,9 +1,9 @@
-## API.md（最新の実装ベース）
+# API Reference
 
-このドキュメントは `src/` のコードに基づいた、Conchの公開API仕様書です。
+This document is the public API specification for Conch, based on the code in `src/`.
 
-### パッケージ構成
-現状、主なクラスと関数は `src/index.ts` からexportされています。
+## Package Structure
+Currently, main classes and functions are exported from `src/index.ts`.
 
 ```typescript
 import { ConchSession, LocalPty, waitForText, waitForStable } from 'conch';
@@ -11,14 +11,14 @@ import { ConchSession, LocalPty, waitForText, waitForStable } from 'conch';
 
 ---
 
-## `src/types.ts`（型定義）
+## `src/types.ts` (Type Definitions)
 
 ### `ITerminalBackend`
-ターミナル実行基盤（PTY/Docker/SSH等）の抽象インターフェース。
+Abstract interface for terminal execution infrastructure (PTY/Docker/SSH, etc.).
 
 ```ts
 export interface ITerminalBackend extends IDisposable {
-  // ライフサイクル
+  // Lifecycle
   spawn(): Promise<void>;
   dispose(): void;
 
@@ -26,7 +26,7 @@ export interface ITerminalBackend extends IDisposable {
   write(data: string): void;
   resize(cols: number, rows: number): void;
 
-  // イベント
+  // Events
   onData(listener: (data: string) => void): IDisposable;
   onExit(listener: (code: number, signal?: number) => void): IDisposable;
 
@@ -35,7 +35,7 @@ export interface ITerminalBackend extends IDisposable {
 }
 ```
 
-### Snapshot関連
+### Snapshot Types
 
 ```ts
 export interface ISnapshot {
@@ -52,19 +52,19 @@ export interface ISnapshot {
 }
 
 export interface FormatterContext {
-  y: number;          // 互換性用（= bufferY）
-  bufferY: number;    // バッファ絶対行番号
-  snapshotY: number;  // スナップショット相対行番号
+  y: number;          // compatibility (= bufferY)
+  bufferY: number;    // Absolute row index in buffer
+  snapshotY: number;  // Relative row index in snapshot
 }
 ```
 
 ---
 
-## `src/session.ts`（Core: `ConchSession`）
+## `src/session.ts` (Core: `ConchSession`)
 
-バックエンドとフロントエンドを接続し、操作と観測を提供するメインクラスです。
+The main class that bridges backend and frontend, providing control and observation capabilities.
 
-### コンストラクタ
+### Constructor
 ```ts
 new ConchSession(backend: ITerminalBackend, options?: { cols?: number; rows?: number })
 ```
@@ -72,75 +72,75 @@ new ConchSession(backend: ITerminalBackend, options?: { cols?: number; rows?: nu
 ### Input Methods
 
 #### `write(data: string): void`
-バックエンドに文字列（エスケープシーケンス含む）を直接送信します。
+Sends string (including escape sequences) directly to the backend.
 
 #### `execute(command: string): void`
-コマンド文字列に改行コード（`\r`）を付与して送信します。
-※ 完了待機は行いません。
+Appends a newline code (`\r`) to the command string and sends it.
+*Note: Does not wait for completion.*
 
 #### `press(key: string): void`
-キー名（`Enter`, `Esc`, `ArrowUp`, `Ctrl+C` など）を指定してキー入力をシミュレートします。
+Simulates key input by specifying key name (`Enter`, `Esc`, `ArrowUp`, `Ctrl+C`, etc.).
 
 #### `type(text: string): void`
-文字列を1文字ずつ入力します。
+Inputs string character by character.
 
 #### `resize(cols: number, rows: number): void`
-xtermとバックエンドの両方をリサイズします。
+Resizes both xterm and backend.
 
 #### `drain(): Promise<void>`
-xtermへの書き込みキューが空になるまで待機します。
-※ バックエンドのコマンド実行完了を待つものではなく、あくまで「画面への反映」を待つものです。
+Waits until the write queue to xterm is empty.
+*Note: This waits for "reflection to screen", not backend command completion.*
 
 ### Observation Methods
 
 #### `getSnapshot(options?: SnapshotOptions): ISnapshot`
-現在の画面状態を取得します。
-- `range: 'viewport'` (default): 現在表示されている範囲のみ
-- `range: 'all'`: スクロールバックを含む全バッファ
+Gets the current screen state.
+- `range: 'viewport'` (default): Currently visible range only
+- `range: 'all'`: Entire buffer including scrollback
 
 ### Events
 
 #### `onOutput(listener): IDisposable`
-PTYからの生データを受信します。
+Receives raw data from PTY.
 
 #### `onExit(listener): IDisposable`
-プロセスの終了を検知します。
+Detects process termination.
 
 ---
 
-## `src/backend/LocalPty.ts`（Backend: `LocalPty`）
+## `src/backend/LocalPty.ts` (Backend: `LocalPty`)
 
-`node-pty` をラップしたローカルプロセス用バックエンドです。
+Local process backend wrapping `node-pty`.
 
 ### `spawn(): Promise<void>`
-プロセスを起動します。
-- Windows環境では `chcp 65001` によるUTF-8化と、画面クリアが完了するまで待機します。
-- 一度 `dispose` されたインスタンスで呼ぶとエラーになります。
+Starts the process.
+- On Windows, waits for UTF-8 setting (`chcp 65001`) and screen clear to complete.
+- Throws error if called on a disposed instance.
 
 ---
 
-## `src/utils.ts`（Utilities）
+## `src/utils.ts` (Utilities)
 
 ### Wait Functions
 
 #### `waitForText(session, pattern, options?): Promise<void>`
-指定した文字列または正規表現が画面（Viewport）に現れるまで待機します。
-- 正規表現の `lastIndex` は毎回リセットされるため、`/g` フラグ付きでも安全に使用できます。
+Waits until specified string or RegExp appears on screen (Viewport).
+- RegExp `lastIndex` is reset every time, so it's safe to use with `/g` flag.
 
 #### `waitForSilence(session, duration?, timeout?): Promise<void>`
-指定時間（デフォルト500ms）、出力が止まるまで待機します。
+Waits until output stops for specified duration (default 500ms).
 
 #### `waitForChange(session, options?): Promise<void>`
-現在のスナップショット内容から変化があるまで待機します。
+Waits until current snapshot content changes.
 
 #### `waitForStable(session, duration?, options?): Promise<void>`
-指定時間、画面内容が変化しなくなる（安定する）まで待機します。
-アニメーションするCUIツールや、大量のログ出力の完了待ちに有用です。
+Waits until screen content stops changing (stabilizes) for specified duration.
+Useful for waiting for completion of animated CUI tools or large log outputs.
 
 ### Locator Functions
 
 #### `cropText(snapshot, rect): string`
-スナップショットから指定した矩形領域（x, y, width, height）のテキストを抽出します。
+Extracts text from specified rectangular area (x, y, width, height) in snapshot.
 
 #### `findText(snapshot, pattern): TextMatch[]`
-スナップショット内で指定したパターンが出現する位置（x, y）を検索してリストで返します。
+Searches for occurrences of pattern in snapshot and returns list of positions (x, y).

@@ -1,110 +1,110 @@
 # Usage Guide
 
-Conch は、AIエージェントや自動化スクリプトが「ターミナル画面（TUI）」を人間と同じように認識・操作するためのライブラリです。
+Conch is a library that allows AI agents and automation scripts to recognize and control "terminal screens (TUI)" just like humans do.
 
 ## Basic Usage
 
-### 1. セッションの開始
+### 1. Starting a Session
 
-`ConchSession` はバックエンド（PTYプロセス）とフロントエンド（画面状態）を管理します。
-`spawn()` は非同期メソッドであり、プロセスの起動と初期化（WindowsでのUTF-8設定など）を行います。
+`ConchSession` manages the backend (PTY process) and the frontend (screen state).
+`spawn()` is an asynchronous method that launches the process and initializes it (e.g., UTF-8 configuration on Windows).
 
 ```typescript
 import { ConchSession, LocalPty } from 'conch';
 
-// 1. バックエンドの作成 (設定のみ)
+// 1. Create Backend (configuration only)
 const pty = new LocalPty('powershell.exe', [], {
   cols: 80,
   rows: 24,
   env: process.env
 });
 
-// 2. セッションの作成
+// 2. Create Session
 const session = new ConchSession(pty, {
   cols: 80,
   rows: 24
 });
 
-// 3. バックエンドの起動 (必須)
+// 3. Spawn the Backend (Required)
 await pty.spawn();
 
-// 終了時のクリーンアップ
+// Cleanup on exit
 process.on('SIGINT', () => {
   session.dispose();
 });
 ```
 
-### 2. 操作 (Input API)
+### 2. Operation (Input API)
 
-エージェントは `press`, `type` などの高レベルAPIを使って操作します。
-従来の `write` や `execute` も引き続き利用可能です。
+Agents interact using high-level APIs like `press` and `type`.
+Traditional `write` and `execute` are also available.
 
 ```typescript
-// コマンド実行 (末尾に改行コード \r を自動付与)
-// ※ 完了待機はしないので注意
+// Execute command (automatically appends \r newline code)
+// Note: Does not wait for completion
 session.execute('ls -la');
 
-// キー入力のシミュレーション
+// Simulate key presses
 session.press('Enter');
 session.press('ArrowDown');
 session.press('Ctrl+C');
 
-// 文字列の入力 (インクリメンタルサーチなど)
+// Input string (e.g., incremental search)
 session.type('filter query');
 
-// ※ write も使用可能 (生のシーケンス送信)
+// Note: write is also available (sends raw sequence)
 session.write('\x1b[A'); 
 ```
 
-### 3. 画面の取得 (Snapshot)
+### 3. Screen Capture (Snapshot)
 
-現在のターミナル画面を文字列として取得します。
-デフォルトでは「現在見えている範囲（Viewport）」のテキストが返されます。
+Captures the current terminal screen as a string.
+By default, it returns the text of the "currently visible range (Viewport)".
 
 ```typescript
 const snapshot = session.getSnapshot();
 console.log(snapshot.text);
 
-// メタデータの利用
-// cursor: バッファ全体での絶対座標
-// cursorSnapshot: 取得したテキスト内での相対座標 (0,0 始まり)
+// Using Metadata
+// cursor: Absolute coordinates in the entire buffer
+// cursorSnapshot: Relative coordinates within the captured text (0,0 based)
 console.log(`Cursor (Abs): (${snapshot.cursor.x}, ${snapshot.cursor.y})`);
 console.log(`Cursor (Rel): (${snapshot.cursorSnapshot.x}, ${snapshot.cursorSnapshot.y})`);
 console.log(`Viewport Top: ${snapshot.meta.viewportY}`);
 ```
 
-### 4. バッファ範囲の指定 (Scrolling)
+### 4. Specifying Buffer Range (Scrolling)
 
-`range` オプションを使うことで、過去のログ（スクロールバック）も含めた情報を取得できます。
+Using the `range` option, you can retrieve information including past logs (scrollback).
 
 ```typescript
-// 全バッファを取得（スクロールバック + 現在の画面）
+// Get entire buffer (scrollback + current screen)
 const fullLog = session.getSnapshot({ range: 'all' });
 
-// 現在のビューポートのみ取得（デフォルト）
+// Get current viewport only (default)
 const viewportOnly = session.getSnapshot({ range: 'viewport' });
 ```
 
 ## Wait API & Polling
 
-TUIアプリケーションでは「画面が変化するまで待つ」「出力が落ち着くまで待つ」といった同期待機が重要です。
+In TUI applications, synchronous waiting such as "wait until screen changes" or "wait until output settles" is crucial.
 
 ```typescript
 import { waitForText, waitForSilence, waitForChange, waitForStable } from 'conch';
 
-// 1. 特定の文字が出るまで待つ
+// 1. Wait for specific text to appear
 await waitForText(session, /Package installed/);
 
-// 2. 画面に変化があるまで待つ
-// 何かキーを押した後、画面が更新されるのを待つ場合に有用
+// 2. Wait for screen change
+// Useful when waiting for screen update after pressing a key
 session.press('Enter');
 await waitForChange(session);
 
-// 3. 画面が安定するまで待つ
-// topコマンドやアニメーションなど、激しく更新される画面が落ち着くのを待つ
-await waitForStable(session, 500); // 500ms変化がなければ完了
+// 3. Wait for screen to stabilize
+// Wait until rapidly updating screen (like top command or animation) settles down
+await waitForStable(session, 500); // Complete if no change for 500ms
 
-// 4. 出力が止まるのを待つ (Raw Outputベース)
+// 4. Wait for output to stop (Raw Output based)
 await waitForSilence(session, 500);
 ```
 
@@ -112,14 +112,14 @@ await waitForSilence(session, 500);
 
 ### Custom Formatting (Snapshot Hook)
 
-スナップショット生成時にフックを挟むことで、行番号の付与や特定の色の強調などが可能です。
-Formatter には `ctx` として座標情報が渡されます。
+You can hook into snapshot generation to add line numbers or highlight specific colors.
+`ctx` containing coordinate information is passed to the Formatter.
 
 ```typescript
 const snapshot = session.getSnapshot({
   formatter: (line, ctx) => {
-    // ctx.bufferY   : バッファ全体での行番号 (0..1000+)
-    // ctx.snapshotY : 取得した範囲内での行番号 (0..24)
+    // ctx.bufferY   : Row number in entire buffer (0..1000+)
+    // ctx.snapshotY : Row number in captured range (0..24)
     const lineContent = line.translateToString(true);
     return `${ctx.snapshotY.toString().padStart(2, '0')} | ${lineContent}`;
   }
@@ -128,17 +128,17 @@ const snapshot = session.getSnapshot({
 
 ### Locator Functions
 
-取得したスナップショットから、特定の領域や文字列を抽出するためのユーティリティ関数です。
+Utility functions to extract specific regions or strings from a captured snapshot.
 
 ```typescript
 import { cropText, findText } from 'conch';
 
 const snapshot = session.getSnapshot();
 
-// 1. 指定した矩形領域のテキストを抽出
+// 1. Extract text from specified rectangular region
 const sidebarText = cropText(snapshot, { x: 0, y: 0, width: 20, height: 10 });
 
-// 2. 文字列の座標を検索
+// 2. Search for string coordinates
 const matches = findText(snapshot, 'Error');
 matches.forEach(m => {
   console.log(`Found at (${m.x}, ${m.y})`);
@@ -147,7 +147,7 @@ matches.forEach(m => {
 
 ### Handling Colors (ANSI)
 
-`formatter` 内で `line.getCell(x)` を使うと、各セルの色情報や文字スタイルにアクセスできます。
+Using `line.getCell(x)` within `formatter` allows access to color information and character styles of each cell.
 
 ```typescript
 session.getSnapshot({
@@ -156,7 +156,7 @@ session.getSnapshot({
     for (let x = 0; x < line.length; x++) {
       const cell = line.getCell(x);
       if (!cell) continue;
-      // 前景色(fg)などの判定ロジックをここに記述
+      // Logic for foreground color (fg) etc.
       output += cell.getChars();
     }
     return output;
@@ -166,10 +166,10 @@ session.getSnapshot({
 
 ### Human Intervention (Telnet)
 
-人間が外部から接続して、エージェントの操作を監視したり、割り込んだりできます。
-（実装予定: Telnetサーバー機能の統合）
+Allows humans to connect externally to monitor agent operations or intervene.
+(Planned implementation: Telnet server integration)
 
 ```bash
-# 別のターミナルから接続
+# Connect from another terminal
 $ telnet localhost 3007
 ```

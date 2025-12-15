@@ -1,28 +1,81 @@
-# 🐚 Conch
-> "In ancient cultures, the conch shell was blown to awaken the ignorant from their slumber. 
-> Today, Conch awakens AI agents to see the true state of the terminal."
+# Conch 🐚
 
-Like the sacred conch that brings order through its sound, Conch brings order 
-to AI-terminal interactions through state management and human intervention.
+> **Headless Terminal Driver for TUI Testing & Automation**
 
-# 背景とペイン
-LLMの開発競争に伴い、LLMの知能指数とそのプログラミング能力は多くの人類を超えるものとなっている。同時にその卓越した能力を利用するため多くのエージェントが開発されている。現状ではコーディングエージェントが主流である。マルチモダリティ、つまり写真や動画を入出力に用いることができる能力が向上すれば数値、文字情報だけでは対応できない別分野のエージェントが現れることは想像できるが、文字情報だけを扱うことがコストパフォーマンスが高い傾向は変わらないだろう。理論上はCLIでできることはすべてエージェントが行うことができることこそがコーディングエージェントがデジタル世界での汎用エージェントとみなせる理由である。しかし、2025年12月現在CLIを完全にエージェントが操作するには1つの大きな障壁が存在する。それは**モーダル/TUI**である。これはVimなどにみられるユーザーの入力を必要としつつも標準入力とは異なる挙動をする状態のことである。Subprocess.runを用いたコマンド実行ではこれらの機能を有するアプリケーションやコマンドを完全に使用できない。Gemini CLIのような一部のコーディングエージェントでは[node-ptyを用いることでこの問題を解決している](https://developers.googleblog.com/ja/say-hello-to-a-new-level-of-interactivity-in-gemini-cli-1/)が、これらの機能はエージェントに密結合しており、汎用的な課題にもかかわらず別のプログラムからそれ単体で呼び出したり埋め込んだりすることが困難である。
+[![CI](https://github.com/YoseiUshida/conch/workflows/CI/badge.svg)](https://github.com/YoseiUshida/conch/actions)
+![License](https://img.shields.io/github/license/YoseiUshida/conch)
 
-# このプロジェクトの役割
-このプロジェクトでは`node-pty` (やDocker API, SSH2など) と`@xterm/headless`を用いて第三者のプログラムやエージェントに埋め込まれるCLI実行基盤を提供することを目指している。
+[**🇯🇵 日本語ドキュメントはこちら**](./README.ja.md)
 
-- モーダル対応のCLI実行基盤
-- コマンド入力とキー入力のAPIを整備し、エージェントがCLIを操作できるようにする
-- LLMの絡むロジックは含まない
-- ストリームで送られてきたPTYの**出力**をANSI等を適切に解釈して、エージェントが見るscreen state（バッファ/カーソル/サイズ/タイトル/代替バッファ）を提供する
-- TCPサーバーを立てて接続できるようにしてユーザーのターミナルからエージェントの見ている画面を共有、介入できるようにする（PlaywrightのCDP接続を参考に。**認証/権限/暗号化は要検討**）
-- アダプター（node-pty / docker / ssh2）により同一インターフェースでローカル、コンテナ、VM、リモートサーバーのリソースのどこを作業場所にするか差し替え可能
+Conch is a robust library for programmatically controlling terminal applications. By combining `node-pty` for process management and `@xterm/headless` for accurate terminal emulation, Conch enables you to:
 
-## 将来的な拡張性 (Interfaces)
-本プロジェクトの `ConchSession` (Core) は、インターフェース層 (Interaction Layer) と分離して設計されています。
-これにより、将来的に以下のような多様な接続形態をサポート可能です。
+*   **Test TUI Applications:** Write integration tests for interactive CLI tools (vim, k9s, inquirer, etc.) with confidence.
+*   **Automate Terminal Tasks:** Build bots that can navigate complex terminal interfaces, wait for specific states, and extract information.
 
-- **Telnet**: 人間による監視・介入用 (実装予定)
-- **MCP Server**: LLM/Agentへの機能提供用 (ツール呼び出し、リソース取得)
-- **WebSocket**: ブラウザベースのUI用
-- **VSCode Extension**: IDE統合用
+Think of it as **"Playwright for Terminals"**.
+
+## Features
+
+*   **Accurate Emulation:** Uses `xterm.js` (headless) to maintain the exact state of the terminal screen, including cursor position, colors, and alternate buffers.
+*   **Flakiness-Free Waits:** Built-in utilities like `waitForText`, `waitForSilence`, and `waitForStable` help you handle asynchronous terminal output reliably without random `sleep()`.
+*   **Human-like Input:** Simulate key presses (`Enter`, `Esc`, `Ctrl+C`) and typing naturally.
+*   **Snapshot Engine:** Capture the "visual" state of the terminal at any moment to verify what the user actually sees.
+*   **Pluggable Backend:** Designed to support Local PTY (default), and extensible for Docker or SSH in the future.
+
+## Installation
+
+```bash
+npm install conch
+# or
+pnpm add conch
+```
+
+## Quick Start
+
+Here is a simple example that spawns a shell, executes a command, and verifies the output.
+
+```typescript
+import { ConchSession, LocalPty, waitForText } from 'conch';
+
+async function main() {
+  // 1. Setup Backend (node-pty wrapper) & Session (xterm emulator)
+  const pty = new LocalPty('bash', [], { cols: 80, rows: 24 });
+  const session = new ConchSession(pty);
+
+  // 2. Start the process
+  await pty.spawn();
+
+  // 3. Execute a command
+  // .execute() automatically appends \r
+  session.execute('echo "Hello Conch"');
+
+  // 4. Wait for the output to appear on the virtual screen
+  await waitForText(session, 'Hello Conch');
+
+  // 5. Inspect the screen state
+  const snapshot = session.getSnapshot();
+  console.log('--- Terminal Screen ---');
+  console.log(snapshot.text);
+
+  // Cleanup
+  session.dispose();
+}
+
+main();
+```
+
+## Documentation
+
+*   [**Usage Guide (USAGE.md)**](./USAGE.md): Detailed examples and best practices.
+*   [**API Reference (API.md)**](./API.md): Complete API documentation for `ConchSession`, `LocalPty`, and utilities.
+*   [**Source Docs (src/README.md)**](./src/README.md): Internal architecture overview.
+
+## Roadmap
+
+*   [ ] **Interaction Layer:** Abstract interface for connecting external agents (MCP, WebSocket servers).
+*   [ ] **Shell Integration:** Support for OSC 133 to detect command completion events.
+*   [ ] **Telnet/SSH Server:** Built-in server to allow human intervention or monitoring of automated sessions.
+
+## License
+
+MIT
