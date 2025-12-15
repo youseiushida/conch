@@ -1,0 +1,30 @@
+{
+  "name": "conch",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsup",
+    "test": "vitest",
+    "lint": "biome check src",
+    "telnet": "chcp 65001 && telnet localhost 3007",
+    "nc": "chcp 65001 && nc localhost 3007"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.7.1",
+  "dependencies": {
+    "@xterm/headless": "^5.5.0",
+    "@lydell/node-pty": "1.1.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.3.8",
+    "@types/node": "^25.0.0",
+    "tsup": "^8.5.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.15"
+  }
+}
