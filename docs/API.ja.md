@@ -8,8 +8,45 @@
 現状、主なクラスと関数は `src/index.ts` からexportされています。
 
 ```typescript
-import { ConchSession, LocalPty, waitForText, waitForStable } from 'conch';
+import { Conch, ConchSession, LocalPty, waitForText, waitForStable } from '@ushida_yosei/conch';
 ```
+
+---
+
+## `src/conch.ts` (Facade: `Conch`)
+
+ライブラリを利用する際のメインエントリポイントです。`ConchSession` をラップし、高レベルな操作を提供します。
+
+### Static Methods
+
+#### `Conch.launch(options): Promise<Conch>`
+新しい Conch インスタンスを作成・起動します。
+- `options.backend`: `{ type: 'localPty', ... }` または `ITerminalBackend` インスタンス。
+- `options.timeoutMs`: 操作のデフォルトタイムアウト。
+
+### Methods
+
+#### `run(command: string, options?): Promise<RunResult>`
+コマンドを実行し、完了まで待機します。
+- OSC 133 (Shell Integration) が利用可能な場合、正確なコマンド完了を検知します。
+- 検知できない場合はタイムアウトまで待機します（fallbackモード）。
+- 終了コード、出力テキスト、スナップショットを返します。
+
+#### `pressAndSnapshot(key: string, options?): Promise<ActionResult>`
+キーを入力し、画面更新を待機します（デフォルト）。
+- 更新後のスナップショットを返します。
+
+#### `typeAndSnapshot(text: string, options?): Promise<ActionResult>`
+文字列を入力し、スナップショットを取得します。
+
+#### `waitForText(pattern, options?): Promise<void>`
+テキストが画面に現れるまで待機します。（`utils.waitForText` に委譲）
+
+#### `waitForStable(options?): Promise<void>`
+画面が安定するまで待機します。（`utils.waitForStable` に委譲）
+
+#### `getSnapshot(options?): ISnapshot`
+現在の画面スナップショットを取得します。
 
 ---
 
@@ -146,3 +183,9 @@ PTYからの生データを受信します。
 
 #### `findText(snapshot, pattern): TextMatch[]`
 スナップショット内で指定したパターンが出現する位置（x, y）を検索してリストで返します。
+
+### Helper Functions
+
+#### `encodeScriptForShell(script, shell): string`
+スクリプトをBase64エンコードし、ターゲットシェルで実行するためのワンライナーを生成します。
+- `bash` (Linux/GNUおよびmacOS/BSDの `base64` コマンド差異を吸収) および `pwsh` をサポートします。

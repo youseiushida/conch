@@ -1,15 +1,15 @@
 import { Terminal } from "@xterm/headless";
 import { getCtrlChar, SpecialKeys } from "./keymap";
 import { BASH_INTEGRATION_SCRIPT, PWSH_INTEGRATION_SCRIPT } from "./scripts";
-import { encodeScriptForShell, waitForText } from "./utils";
-import { ShellIntegrationType } from "./types";
 import type {
 	IDisposable,
+	IShellIntegrationEvent,
 	ISnapshot,
 	ITerminalBackend,
 	SnapshotOptions,
-	IShellIntegrationEvent,
 } from "./types";
+import { ShellIntegrationType } from "./types";
+import { encodeScriptForShell, waitForText } from "./utils";
 
 export interface ConchSessionOptions {
 	cols?: number;
@@ -29,8 +29,9 @@ export class ConchSession implements IDisposable {
 	// イベントリスナー
 	private outputListeners: ((data: string) => void)[] = [];
 	private exitListeners: ((code: number, signal?: number) => void)[] = [];
-	private shellIntegrationListeners: ((event: IShellIntegrationEvent) => void)[] =
-		[];
+	private shellIntegrationListeners: ((
+		event: IShellIntegrationEvent,
+	) => void)[] = [];
 
 	constructor(backend: ITerminalBackend, options: ConchSessionOptions = {}) {
 		this.backend = backend;
@@ -79,10 +80,13 @@ export class ConchSession implements IDisposable {
 		this.disposables.push(exitDisposable);
 
 		// OSC 133 (Shell Integration) ハンドラの登録
-		const oscDisposable = this.terminal.parser.registerOscHandler(133, (data) => {
-			this.handleOsc133(data);
-			return true; // handled
-		});
+		const oscDisposable = this.terminal.parser.registerOscHandler(
+			133,
+			(data) => {
+				this.handleOsc133(data);
+				return true; // handled
+			},
+		);
 		this.disposables.push(oscDisposable);
 	}
 

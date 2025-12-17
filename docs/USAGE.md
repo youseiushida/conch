@@ -1,175 +1,176 @@
 # Usage Guide
 
-Conch is a library that allows AI agents and automation scripts to recognize and control "terminal screens (TUI)" just like humans do.
+Conch is a robust library for controlling terminal applications.
+It provides a high-level API (`Conch` facade) that combines action, waiting, and snapshotting into single atomic operations, making your automation scripts reliable and concise.
 
-## Basic Usage
+## 1. Getting Started
 
-### 1. Starting a Session
-
-`ConchSession` manages the backend (PTY process) and the frontend (screen state).
-`spawn()` is an asynchronous method that launches the process and initializes it (e.g., UTF-8 configuration on Windows).
+The recommended way to use Conch is through the `Conch.launch()` method. This handles backend creation, session initialization, and shell integration setup in one go.
 
 ```typescript
-import { ConchSession, LocalPty } from 'conch';
+import { Conch } from '@ushida_yosei/conch';
 
-// 1. Create Backend (configuration only)
-const pty = new LocalPty('powershell.exe', [], {
+// 1. Launch a new session
+const conch = await Conch.launch({
+  // Backend configuration (uses 'localPty' by default logic if omitted, but explicit is better)
+  backend: {
+    type: 'localPty',
+    file: process.platform === 'win32' ? 'powershell.exe' : 'bash',
+    args: [],
+    env: process.env,
+  },
+  // Terminal size
   cols: 80,
   rows: 24,
-  env: process.env
+  // Default timeout for all operations
+  timeoutMs: 30_000,
 });
 
-// 2. Create Session
-const session = new ConchSession(pty, {
-  cols: 80,
-  rows: 24
+try {
+  // 2. Run a command and wait for it to finish
+  // By default, this waits for output to settle (fallback mode).
+  const result = await conch.run('echo "Hello Conch"');
+  
+  console.log(result.outputText); // "Hello Conch"
+  console.log(result.exitCode);   // undefined (unless Shell Integration is enabled)
+
+} finally {
+  // 3. Always dispose to kill the process
+  conch.dispose();
+}
+```
+
+## 2. High-Level API (Action + Wait + Snapshot)
+
+Conch's high-level methods perform an action, wait for a specific condition (like screen update), and return a snapshot of the result. This eliminates "flaky" sleeps from your code.
+
+### `run(command, options?)`
+
+Executes a shell command and waits for completion.
+
+- **Returns**: `RunResult` (exitCode, outputText, snapshot)
+- **Wait Strategy**:
+  - If **Shell Integration** is enabled: Waits for the exact command completion event (OSC 133).
+  - Otherwise: Waits for output to stop (fallback).
+
+```typescript
+const { exitCode, outputText } = await conch.run('ls -la', {
+  timeoutMs: 5000,
+  strict: true // Throw error if command times out
+});
+```
+
+### `pressAndSnapshot(key, options?)`
+
+Simulates a key press and waits for the screen to change. Ideal for TUI navigation.
+
+- **Default Wait**: `change` (Waits until the screen content updates)
+
+```typescript
+// Press 'Down' and wait for the selection to move
+const { snapshot } = await conch.pressAndSnapshot('ArrowDown');
+
+// Verify the new state
+if (snapshot.text.includes('> Selected Item')) {
+  // ...
+}
+```
+
+### `typeAndSnapshot(text, options?)`
+
+Types a string and captures the screen.
+
+- **Default Wait**: `drain` (Waits for input to be processed by xterm, fast)
+
+```typescript
+// Type a search query
+await conch.typeAndSnapshot('search query');
+
+// You can override the wait strategy if needed
+await conch.typeAndSnapshot('enter', {
+  wait: { kind: 'stable', durationMs: 500 } // Wait for 500ms stability
+});
+```
+
+## 3. Shell Integration (OSC 133)
+
+For the most reliable command execution, enable Shell Integration. This injects a small script into the shell to emit OSC 133 escape sequences, allowing Conch to detect exactly when a prompt returns and capture the exit code.
+
+```typescript
+const conch = await Conch.launch({
+  backend: { type: 'localPty', ... },
+  shellIntegration: {
+    enable: true,
+    shell: 'bash', // 'bash' or 'pwsh' (auto-detected if omitted, but explicit recommended)
+    strict: false, // If true, throws error if injection fails
+  }
 });
 
-// 3. Spawn the Backend (Required)
+// Now 'run' can capture the real exit code!
+const { exitCode } = await conch.run('exit 42');
+console.log(exitCode); // 42
+```
+
+## 4. Manual Control & Assertions
+
+You can also use lower-level methods for granular control.
+
+### Wait Utilities
+
+These are available directly on the `conch` instance or as standalone functions.
+
+```typescript
+// Wait for specific text to appear
+await conch.waitForText(/Success/);
+
+// Wait for the screen to stop changing (useful for animations/spinners)
+await conch.waitForStable({ durationMs: 1000 });
+
+// Wait for no new data output
+await conch.waitForSilence({ durationMs: 500 });
+```
+
+### Locator Functions (Instance Methods)
+
+Shortcuts to extract or verify data from the screen.
+
+```typescript
+// Get the current screen text
+const text = conch.screenText();
+
+// Check if text exists (returns boolean)
+if (conch.hasText('Error')) { ... }
+
+// Find coordinates of a text
+const matches = conch.findText('Error');
+
+// Extract text from a specific region
+const status = conch.cropText({ x: 0, y: 23, width: 80, height: 1 });
+```
+
+## 5. Low-Level Usage (`ConchSession`)
+
+If you don't need the `Conch` facade or want to manage the `ConchSession` and `ITerminalBackend` manually:
+
+```typescript
+import { ConchSession, LocalPty } from '@ushida_yosei/conch';
+
+const pty = new LocalPty('bash');
+const session = new ConchSession(pty);
+
 await pty.spawn();
 
-// Cleanup on exit
-process.on('SIGINT', () => {
-  session.dispose();
-});
+session.write('ls\r'); // Raw write
+// You must handle waiting manually
+await waitForText(session, 'package.json');
 ```
 
-### 2. Operation (Input API)
+## Appendix: Available Key Names
 
-Agents interact using high-level APIs like `press` and `type`.
-Traditional `write` and `execute` are also available.
+For `press()` and `pressAndSnapshot()`, you can use:
 
-```typescript
-// Execute command (automatically appends \r newline code)
-// Note: Does not wait for completion
-session.execute('ls -la');
-
-// Simulate key presses
-session.press('Enter');
-session.press('ArrowDown');
-session.press('Ctrl+C');
-
-// Input string (e.g., incremental search)
-session.type('filter query');
-
-// Note: write is also available (sends raw sequence)
-session.write('\x1b[A'); 
-```
-
-### 3. Screen Capture (Snapshot)
-
-Captures the current terminal screen as a string.
-By default, it returns the text of the "currently visible range (Viewport)".
-
-```typescript
-const snapshot = session.getSnapshot();
-console.log(snapshot.text);
-
-// Using Metadata
-// cursor: Absolute coordinates in the entire buffer
-// cursorSnapshot: Relative coordinates within the captured text (0,0 based)
-console.log(`Cursor (Abs): (${snapshot.cursor.x}, ${snapshot.cursor.y})`);
-console.log(`Cursor (Rel): (${snapshot.cursorSnapshot.x}, ${snapshot.cursorSnapshot.y})`);
-console.log(`Viewport Top: ${snapshot.meta.viewportY}`);
-```
-
-### 4. Specifying Buffer Range (Scrolling)
-
-Using the `range` option, you can retrieve information including past logs (scrollback).
-
-```typescript
-// Get entire buffer (scrollback + current screen)
-const fullLog = session.getSnapshot({ range: 'all' });
-
-// Get current viewport only (default)
-const viewportOnly = session.getSnapshot({ range: 'viewport' });
-```
-
-## Wait API & Polling
-
-In TUI applications, synchronous waiting such as "wait until screen changes" or "wait until output settles" is crucial.
-
-```typescript
-import { waitForText, waitForSilence, waitForChange, waitForStable } from 'conch';
-
-// 1. Wait for specific text to appear
-await waitForText(session, /Package installed/);
-
-// 2. Wait for screen change
-// Useful when waiting for screen update after pressing a key
-session.press('Enter');
-await waitForChange(session);
-
-// 3. Wait for screen to stabilize
-// Wait until rapidly updating screen (like top command or animation) settles down
-await waitForStable(session, 500); // Complete if no change for 500ms
-
-// 4. Wait for output to stop (Raw Output based)
-await waitForSilence(session, 500);
-```
-
-## Advanced Usage
-
-### Custom Formatting (Snapshot Hook)
-
-You can hook into snapshot generation to add line numbers or highlight specific colors.
-`ctx` containing coordinate information is passed to the Formatter.
-
-```typescript
-const snapshot = session.getSnapshot({
-  formatter: (line, ctx) => {
-    // ctx.bufferY   : Row number in entire buffer (0..1000+)
-    // ctx.snapshotY : Row number in captured range (0..24)
-    const lineContent = line.translateToString(true);
-    return `${ctx.snapshotY.toString().padStart(2, '0')} | ${lineContent}`;
-  }
-});
-```
-
-### Locator Functions
-
-Utility functions to extract specific regions or strings from a captured snapshot.
-
-```typescript
-import { cropText, findText } from 'conch';
-
-const snapshot = session.getSnapshot();
-
-// 1. Extract text from specified rectangular region
-const sidebarText = cropText(snapshot, { x: 0, y: 0, width: 20, height: 10 });
-
-// 2. Search for string coordinates
-const matches = findText(snapshot, 'Error');
-matches.forEach(m => {
-  console.log(`Found at (${m.x}, ${m.y})`);
-});
-```
-
-### Handling Colors (ANSI)
-
-Using `line.getCell(x)` within `formatter` allows access to color information and character styles of each cell.
-
-```typescript
-session.getSnapshot({
-  formatter: (line, ctx) => {
-    let output = '';
-    for (let x = 0; x < line.length; x++) {
-      const cell = line.getCell(x);
-      if (!cell) continue;
-      // Logic for foreground color (fg) etc.
-      output += cell.getChars();
-    }
-    return output;
-  }
-});
-```
-
-### Human Intervention (Telnet)
-
-Allows humans to connect externally to monitor agent operations or intervene.
-(Planned implementation: Telnet server integration)
-
-```bash
-# Connect from another terminal
-$ telnet localhost 3007
-```
+- `Enter`, `Backspace`, `Tab`, `Escape`
+- `ArrowUp`, `ArrowDown`, `ArrowRight`, `ArrowLeft`
+- `Home`, `End`, `PageUp`, `PageDown`, `Insert`, `Delete`
+- `F1` to `F12`
+- `Ctrl+C` (and other `Ctrl+*` combinations)

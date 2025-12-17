@@ -6,8 +6,45 @@ This document is the public API specification for Conch, based on the code in `s
 Currently, main classes and functions are exported from `src/index.ts`.
 
 ```typescript
-import { ConchSession, LocalPty, waitForText, waitForStable } from 'conch';
+import { Conch, ConchSession, LocalPty, waitForText, waitForStable } from '@ushida_yosei/conch';
 ```
+
+---
+
+## `src/conch.ts` (Facade: `Conch`)
+
+The primary entry point for using the library. It wraps `ConchSession` and provides high-level operations.
+
+### Static Methods
+
+#### `Conch.launch(options): Promise<Conch>`
+Creates and starts a new Conch instance.
+- `options.backend`: `{ type: 'localPty', ... }` or an `ITerminalBackend` instance.
+- `options.timeoutMs`: Default timeout for operations.
+
+### Methods
+
+#### `run(command: string, options?): Promise<RunResult>`
+Executes a command and waits for completion.
+- Uses OSC 133 (Shell Integration) if available to detect exact command completion.
+- Falls back to timeout if OSC 133 is not detected.
+- Returns exit code, output text, and snapshots.
+
+#### `pressAndSnapshot(key: string, options?): Promise<ActionResult>`
+Presses a key and waits for a screen update (default).
+- Returns the snapshot after the update.
+
+#### `typeAndSnapshot(text: string, options?): Promise<ActionResult>`
+Types a string and captures a snapshot.
+
+#### `waitForText(pattern, options?): Promise<void>`
+Waits for text to appear on the screen. (Delegates to `utils.waitForText`)
+
+#### `waitForStable(options?): Promise<void>`
+Waits for the screen to stabilize. (Delegates to `utils.waitForStable`)
+
+#### `getSnapshot(options?): ISnapshot`
+Returns the current screen snapshot.
 
 ---
 
@@ -144,3 +181,9 @@ Extracts text from specified rectangular area (x, y, width, height) in snapshot.
 
 #### `findText(snapshot, pattern): TextMatch[]`
 Searches for occurrences of pattern in snapshot and returns list of positions (x, y).
+
+### Helper Functions
+
+#### `encodeScriptForShell(script, shell): string`
+Encodes a script to Base64 and generates a one-liner to execute it in the target shell.
+- Supports `bash` (using `base64 -d` or `-D` or `--decode` for cross-platform compatibility) and `pwsh`.

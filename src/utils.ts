@@ -6,6 +6,30 @@ export interface WaitOptions {
 	interval?: number;
 }
 
+type DrainableSession = ConchSession & {
+	// Some test doubles may not implement drain; treat it as optional.
+	drain?: () => Promise<void>;
+};
+
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Best-effort drain to reduce flakiness from xterm write lag.
+ *
+ * - Never blocks indefinitely (bounded by budgetMs).
+ * - If session doesn't support drain (e.g. test doubles), it becomes a no-op.
+ */
+async function bestEffortDrain(
+	session: DrainableSession,
+	budgetMs: number,
+): Promise<void> {
+	if (!session.drain) return;
+	if (budgetMs <= 0) return;
+	await Promise.race([session.drain(), sleep(budgetMs)]);
+}
+
 /**
  * 指定された正規表現または文字列が、セッションのスナップショット（viewport）に含まれるまで待機する
  *
@@ -26,13 +50,16 @@ export function waitForText(
 ): Promise<void> {
 	const timeout = options.timeout ?? 10000;
 	const interval = options.interval ?? 50;
+	const drainBudgetMs = Math.min(interval, 25);
 
 	return new Promise((resolve, reject) => {
-		let timer: NodeJS.Timeout | undefined;
+		let pollTimer: NodeJS.Timeout | undefined;
+		let timedOut = false;
 
 		// タイムアウト処理
 		const timeoutId = setTimeout(() => {
-			if (timer) clearInterval(timer);
+			timedOut = true;
+			if (pollTimer) clearTimeout(pollTimer);
 			reject(
 				new Error(
 					`waitForText timed out after ${timeout}ms: pattern "${pattern}" not found`,
@@ -40,8 +67,12 @@ export function waitForText(
 			);
 		}, timeout);
 
-		// ポーリング処理
-		const check = () => {
+		const tick = async () => {
+			if (timedOut) return;
+
+			// Reduce flakiness by letting xterm catch up (best-effort).
+			await bestEffortDrain(session as DrainableSession, drainBudgetMs);
+
 			const snapshot = session.getSnapshot(); // viewportのみ取得
 			let found: boolean;
 
@@ -58,16 +89,17 @@ export function waitForText(
 
 			if (found) {
 				clearTimeout(timeoutId);
-				if (timer) clearInterval(timer);
+				if (pollTimer) clearTimeout(pollTimer);
 				resolve();
+				return;
 			}
+
+			pollTimer = setTimeout(() => {
+				void tick();
+			}, interval);
 		};
 
-		// 初回チェック
-		check();
-
-		// 定期チェック開始
-		timer = setInterval(check, interval);
+		void tick();
 	});
 }
 
@@ -143,26 +175,43 @@ export function waitForChange(
 ): Promise<void> {
 	const timeout = options.timeout ?? 10000;
 	const interval = options.interval ?? 50;
+	const drainBudgetMs = Math.min(interval, 25);
 
 	return new Promise((resolve, reject) => {
-		const initialText = session.getSnapshot().text;
-		let timer: NodeJS.Timeout | undefined;
+		let pollTimer: NodeJS.Timeout | undefined;
+		let timedOut = false;
+		let initialText = "";
 
 		const timeoutId = setTimeout(() => {
-			if (timer) clearInterval(timer);
+			timedOut = true;
+			if (pollTimer) clearTimeout(pollTimer);
 			reject(new Error(`waitForChange timed out after ${timeout}ms`));
 		}, timeout);
 
-		const check = () => {
-			const currentText = session.getSnapshot().text;
-			if (currentText !== initialText) {
-				clearTimeout(timeoutId);
-				if (timer) clearInterval(timer);
-				resolve();
+		const tick = async () => {
+			if (timedOut) return;
+
+			await bestEffortDrain(session as DrainableSession, drainBudgetMs);
+
+			// Initialize baseline on first tick (after best-effort drain)
+			if (initialText === "") {
+				initialText = session.getSnapshot().text;
+			} else {
+				const currentText = session.getSnapshot().text;
+				if (currentText !== initialText) {
+					clearTimeout(timeoutId);
+					if (pollTimer) clearTimeout(pollTimer);
+					resolve();
+					return;
+				}
 			}
+
+			pollTimer = setTimeout(() => {
+				void tick();
+			}, interval);
 		};
 
-		timer = setInterval(check, interval);
+		void tick();
 	});
 }
 
@@ -180,34 +229,48 @@ export function waitForStable(
 ): Promise<void> {
 	const timeout = options.timeout ?? 10000;
 	const interval = options.interval ?? 50;
+	const drainBudgetMs = Math.min(interval, 25);
 
 	return new Promise((resolve, reject) => {
-		let timer: NodeJS.Timeout | undefined;
+		let pollTimer: NodeJS.Timeout | undefined;
+		let timedOut = false;
 		let lastChangeTime = Date.now();
-		let lastText = session.getSnapshot().text;
+		let lastText = "";
 
 		const timeoutId = setTimeout(() => {
-			if (timer) clearInterval(timer);
+			timedOut = true;
+			if (pollTimer) clearTimeout(pollTimer);
 			reject(new Error(`waitForStable timed out after ${timeout}ms`));
 		}, timeout);
 
-		const check = () => {
+		const tick = async () => {
+			if (timedOut) return;
+
+			await bestEffortDrain(session as DrainableSession, drainBudgetMs);
+
 			const currentText = session.getSnapshot().text;
 			const now = Date.now();
 
-			if (currentText !== lastText) {
+			// Initialize baseline on first tick
+			if (lastText === "") {
+				lastText = currentText;
+				lastChangeTime = now;
+			} else if (currentText !== lastText) {
 				lastChangeTime = now;
 				lastText = currentText;
-			} else {
-				if (now - lastChangeTime >= duration) {
-					clearTimeout(timeoutId);
-					if (timer) clearInterval(timer);
-					resolve();
-				}
+			} else if (now - lastChangeTime >= duration) {
+				clearTimeout(timeoutId);
+				if (pollTimer) clearTimeout(pollTimer);
+				resolve();
+				return;
 			}
+
+			pollTimer = setTimeout(() => {
+				void tick();
+			}, interval);
 		};
 
-		timer = setInterval(check, interval);
+		void tick();
 	});
 }
 
@@ -317,9 +380,9 @@ export function encodeScriptForShell(
 
 	if (shell === "bash") {
 		// Use eval to execute in current shell context
-		// Default to 'base64 -d' (Linux/WSL standard)
-		// For macOS compatibility in future, we might need auto-detection or option
-		return `eval "$(echo '${b64}' | base64 -d)"`;
+		// Try 'base64 --decode' (GNU), 'base64 -d' (Linux), then 'base64 -D' (macOS)
+		// Use printf to avoid newline injection
+		return `eval "$(printf '%s' '${b64}' | { base64 --decode 2>/dev/null || base64 -d 2>/dev/null || base64 -D 2>/dev/null; })"`;
 	}
 
 	if (shell === "pwsh") {

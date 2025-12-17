@@ -40,6 +40,6 @@ __conch_prompt_start() {
 }
 
 if [[ ! "$PROMPT_COMMAND" == *"__conch_prompt_start"* ]]; then
-    PROMPT_COMMAND="\${PROMPT_COMMAND:+\$PROMPT_COMMAND; }__conch_prompt_start"
+    PROMPT_COMMAND="\${PROMPT_COMMAND:+$PROMPT_COMMAND; }__conch_prompt_start"
 fi
 `;

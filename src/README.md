@@ -4,6 +4,9 @@ This directory contains the core logic of Conch.
 
 ## Directory Structure
 
+- **`conch.ts`**: `Conch` Class (Facade)
+    - Provides the high-level API used by consumers.
+    - Integrates `ConchSession` and `ITerminalBackend`, wrapping synchronization (Action Queue) and wait logic.
 - **`session.ts`**: `ConchSession` Class
     - The controller that bridges the backend (process) and the frontend (xterm screen).
     - Responsible for generating snapshots as "Facts", normalizing input, synchronizing resizes, etc.
@@ -15,6 +18,7 @@ This directory contains the core logic of Conch.
 - **`utils.ts`**: Wait & Locator Utilities
     - `waitForText`, `waitForStable`: Functions to wait for screen state changes.
     - `cropText`, `findText`: Functions to extract information from snapshots.
+    - `encodeScriptForShell`: Cross-platform (Linux/macOS) shell script injection helper.
 - **`backend/`**: Backend Adapters
     - Contains implementations of PTY (e.g., `LocalPty`).
 - **`index.ts`**: Entry Point
@@ -33,6 +37,7 @@ graph TD
     end
 
     subgraph Core [Conch Core]
+        Facade[Conch Facade]
         Session[ConchSession]
         Xterm[xterm-headless]
     end
@@ -54,19 +59,22 @@ graph TD
     Session -->|onOutput| Human
     
     %% Input
-    Human -->|write| Session
-    Agent -->|press/type| Session
+    Human -->|write| Facade
+    Agent -->|run/press| Facade
+    Facade -->|write| Session
     
     %% Snapshot & Analysis
-    Agent -->|getSnapshot| Session
+    Agent -->|getSnapshot| Facade
+    Facade -->|getSnapshot| Session
     Agent -.->|use| Wait
     Agent -.->|use| Locator
     Wait -.->|getSnapshot| Session
     Locator -.->|text/meta| Session
 ```
 
-### Core Responsibilities (ConchSession)
-- **Terminal State**: accurately reflects and maintains output from the backend in the xterm buffer.
+### Core Responsibilities (Conch / ConchSession)
+- **High-Level Control**: Provides high-level flows like `run()` and `pressAndSnapshot()` that combine action, waiting, and snapshotting.
+- **Terminal State**: Accurately reflects and maintains output from the backend in the xterm buffer.
 - **Facts Provider**: Provides "facts" such as cursor position and viewport information through snapshots, not just text.
 - **Input Normalization**: Converts abstract operations like `press('Enter')` into appropriate escape sequences and sends them to the backend.
 - **Consistency**: Guarantees timing consistency between asynchronous write operations and snapshot acquisition via `drain()`.

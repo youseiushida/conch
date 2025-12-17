@@ -2,176 +2,178 @@
 
 > ⚠️ これは [USAGE.md](./USAGE.md) の日本語訳です。最新情報は英語版をご確認ください。
 
-Conch は、AIエージェントや自動化スクリプトが「ターミナル画面（TUI）」を人間と同じように認識・操作するためのライブラリです。
+Conch はターミナルアプリケーションを制御するための堅牢なライブラリです。
+操作 (Action)、待機 (Wait)、スナップショット取得 (Snapshot) を一つのアトミックな操作としてまとめた高レベルAPI (`Conch` ファサード) を提供し、信頼性の高い自動化スクリプトを実現します。
 
-## Basic Usage
+## 1. Getting Started
 
-### 1. セッションの開始
-
-`ConchSession` はバックエンド（PTYプロセス）とフロントエンド（画面状態）を管理します。
-`spawn()` は非同期メソッドであり、プロセスの起動と初期化（WindowsでのUTF-8設定など）を行います。
+Conch を利用する推奨方法は `Conch.launch()` メソッドを使うことです。これにより、バックエンドの作成、セッションの初期化、そしてシェル統合（Shell Integration）のセットアップを一括で行えます。
 
 ```typescript
-import { ConchSession, LocalPty } from 'conch';
+import { Conch } from '@ushida_yosei/conch';
 
-// 1. バックエンドの作成 (設定のみ)
-const pty = new LocalPty('powershell.exe', [], {
+// 1. セッションの開始
+const conch = await Conch.launch({
+  // バックエンド設定（省略時は自動判定されますが、明示的な指定を推奨）
+  backend: {
+    type: 'localPty',
+    file: process.platform === 'win32' ? 'powershell.exe' : 'bash',
+    args: [],
+    env: process.env,
+  },
+  // ターミナルサイズ
   cols: 80,
   rows: 24,
-  env: process.env
+  // 全操作のデフォルトタイムアウト
+  timeoutMs: 30_000,
 });
 
-// 2. セッションの作成
-const session = new ConchSession(pty, {
-  cols: 80,
-  rows: 24
+try {
+  // 2. コマンドを実行し、完了するまで待機する
+  // デフォルトでは、出力が落ち着くまで待機します（fallbackモード）。
+  const result = await conch.run('echo "Hello Conch"');
+  
+  console.log(result.outputText); // "Hello Conch"
+  console.log(result.exitCode);   // undefined (Shell Integrationが無効な場合)
+
+} finally {
+  // 3. プロセスを終了するために必ず dispose を呼ぶ
+  conch.dispose();
+}
+```
+
+## 2. High-Level API (Action + Wait + Snapshot)
+
+Conch の高レベルメソッドは、「操作を行い、特定の状態（画面更新など）を待ち、結果のスナップショットを返す」という一連の流れを実行します。これにより、コードから不安定な `sleep` を排除できます。
+
+### `run(command, options?)`
+
+シェルコマンドを実行し、完了を待機します。
+
+- **戻り値**: `RunResult` (exitCode, outputText, snapshot)
+- **待機戦略**:
+  - **Shell Integration** が有効な場合: コマンド完了イベント (OSC 133) を正確に待ちます。
+  - 無効な場合: 出力が止まるのを待ちます (fallback)。
+
+```typescript
+const { exitCode, outputText } = await conch.run('ls -la', {
+  timeoutMs: 5000,
+  strict: true // タイムアウト時にエラーを投げる
+});
+```
+
+### `pressAndSnapshot(key, options?)`
+
+キー入力をシミュレートし、画面が変化するのを待ちます。TUIアプリのナビゲーションに最適です。
+
+- **デフォルト待機**: `change` (画面内容が変わるまで待つ)
+
+```typescript
+// 下矢印キーを押して、選択項目が移動するのを待つ
+const { snapshot } = await conch.pressAndSnapshot('ArrowDown');
+
+// 新しい状態を検証
+if (snapshot.text.includes('> Selected Item')) {
+  // ...
+}
+```
+
+### `typeAndSnapshot(text, options?)`
+
+文字列を入力し、画面をキャプチャします。
+
+- **デフォルト待機**: `drain` (xtermが入力を処理し終わるのを待つ。高速。)
+
+```typescript
+// 検索クエリを入力
+await conch.typeAndSnapshot('search query');
+
+// 必要に応じて待機戦略をオーバーライド可能
+await conch.typeAndSnapshot('enter', {
+  wait: { kind: 'stable', durationMs: 500 } // 入力後、500ms画面が安定するのを待つ
+});
+```
+
+## 3. Shell Integration (OSC 133)
+
+最も信頼性の高いコマンド実行制御を行うには、Shell Integration を有効にしてください。
+これはシェルに小さなスクリプトを注入し、OSC 133 エスケープシーケンスを発行させることで、Conch がプロンプトの戻りや終了コードを正確に検知できるようにする機能です。
+
+```typescript
+const conch = await Conch.launch({
+  backend: { type: 'localPty', ... },
+  shellIntegration: {
+    enable: true,
+    shell: 'bash', // 'bash' または 'pwsh' (省略時は自動検知を試みるが明示推奨)
+    strict: false, // trueの場合、注入失敗時にエラーになる
+  }
 });
 
-// 3. バックエンドの起動 (必須)
+// これにより、run() で実際の終了コードを取得できるようになります！
+const { exitCode } = await conch.run('exit 42');
+console.log(exitCode); // 42
+```
+
+## 4. Manual Control & Assertions
+
+より細かい制御のために、待機関数や抽出関数を利用できます。
+
+### Wait Utilities
+
+`conch` インスタンスのメソッドとして、または単体の関数として利用可能です。
+
+```typescript
+// 特定のテキストが現れるまで待つ
+await conch.waitForText(/Success/);
+
+// 画面が変化しなくなる（安定する）まで待つ (アニメーションやスピナー待ちに有用)
+await conch.waitForStable({ durationMs: 1000 });
+
+// 新しいデータ出力が止まるまで待つ
+await conch.waitForSilence({ durationMs: 500 });
+```
+
+### Locator Functions (Instance Methods)
+
+画面内容を検証・抽出するためのショートカットメソッドです。
+
+```typescript
+// 現在の画面テキストを取得
+const text = conch.screenText();
+
+// テキストが存在するか確認 (boolean)
+if (conch.hasText('Error')) { ... }
+
+// テキストの座標を検索
+const matches = conch.findText('Error');
+
+// 特定の領域からテキストを抽出
+const status = conch.cropText({ x: 0, y: 23, width: 80, height: 1 });
+```
+
+## 5. Low-Level Usage (`ConchSession`)
+
+`Conch` ファサードを使わず、`ConchSession` と `ITerminalBackend` を手動で管理する場合の使用法です。
+
+```typescript
+import { ConchSession, LocalPty } from '@ushida_yosei/conch';
+
+const pty = new LocalPty('bash');
+const session = new ConchSession(pty);
+
 await pty.spawn();
 
-// 終了時のクリーンアップ
-process.on('SIGINT', () => {
-  session.dispose();
-});
+session.write('ls\r'); // 生の書き込み
+// 待機は手動で行う必要があります
+await waitForText(session, 'package.json');
 ```
 
-### 2. 操作 (Input API)
+## Appendix: Available Key Names
 
-エージェントは `press`, `type` などの高レベルAPIを使って操作します。
-従来の `write` や `execute` も引き続き利用可能です。
+`press()` や `pressAndSnapshot()` で使用可能なキー名の一例です:
 
-```typescript
-// コマンド実行 (末尾に改行コード \r を自動付与)
-// ※ 完了待機はしないので注意
-session.execute('ls -la');
-
-// キー入力のシミュレーション
-session.press('Enter');
-session.press('ArrowDown');
-session.press('Ctrl+C');
-
-// 文字列の入力 (インクリメンタルサーチなど)
-session.type('filter query');
-
-// ※ write も使用可能 (生のシーケンス送信)
-session.write('\x1b[A'); 
-```
-
-### 3. 画面の取得 (Snapshot)
-
-現在のターミナル画面を文字列として取得します。
-デフォルトでは「現在見えている範囲（Viewport）」のテキストが返されます。
-
-```typescript
-const snapshot = session.getSnapshot();
-console.log(snapshot.text);
-
-// メタデータの利用
-// cursor: バッファ全体での絶対座標
-// cursorSnapshot: 取得したテキスト内での相対座標 (0,0 始まり)
-console.log(`Cursor (Abs): (${snapshot.cursor.x}, ${snapshot.cursor.y})`);
-console.log(`Cursor (Rel): (${snapshot.cursorSnapshot.x}, ${snapshot.cursorSnapshot.y})`);
-console.log(`Viewport Top: ${snapshot.meta.viewportY}`);
-```
-
-### 4. バッファ範囲の指定 (Scrolling)
-
-`range` オプションを使うことで、過去のログ（スクロールバック）も含めた情報を取得できます。
-
-```typescript
-// 全バッファを取得（スクロールバック + 現在の画面）
-const fullLog = session.getSnapshot({ range: 'all' });
-
-// 現在のビューポートのみ取得（デフォルト）
-const viewportOnly = session.getSnapshot({ range: 'viewport' });
-```
-
-## Wait API & Polling
-
-TUIアプリケーションでは「画面が変化するまで待つ」「出力が落ち着くまで待つ」といった同期待機が重要です。
-
-```typescript
-import { waitForText, waitForSilence, waitForChange, waitForStable } from 'conch';
-
-// 1. 特定の文字が出るまで待つ
-await waitForText(session, /Package installed/);
-
-// 2. 画面に変化があるまで待つ
-// 何かキーを押した後、画面が更新されるのを待つ場合に有用
-session.press('Enter');
-await waitForChange(session);
-
-// 3. 画面が安定するまで待つ
-// topコマンドやアニメーションなど、激しく更新される画面が落ち着くのを待つ
-await waitForStable(session, 500); // 500ms変化がなければ完了
-
-// 4. 出力が止まるのを待つ (Raw Outputベース)
-await waitForSilence(session, 500);
-```
-
-## Advanced Usage
-
-### Custom Formatting (Snapshot Hook)
-
-スナップショット生成時にフックを挟むことで、行番号の付与や特定の色の強調などが可能です。
-Formatter には `ctx` として座標情報が渡されます。
-
-```typescript
-const snapshot = session.getSnapshot({
-  formatter: (line, ctx) => {
-    // ctx.bufferY   : バッファ全体での行番号 (0..1000+)
-    // ctx.snapshotY : 取得した範囲内での行番号 (0..24)
-    const lineContent = line.translateToString(true);
-    return `${ctx.snapshotY.toString().padStart(2, '0')} | ${lineContent}`;
-  }
-});
-```
-
-### Locator Functions
-
-取得したスナップショットから、特定の領域や文字列を抽出するためのユーティリティ関数です。
-
-```typescript
-import { cropText, findText } from 'conch';
-
-const snapshot = session.getSnapshot();
-
-// 1. 指定した矩形領域のテキストを抽出
-const sidebarText = cropText(snapshot, { x: 0, y: 0, width: 20, height: 10 });
-
-// 2. 文字列の座標を検索
-const matches = findText(snapshot, 'Error');
-matches.forEach(m => {
-  console.log(`Found at (${m.x}, ${m.y})`);
-});
-```
-
-### Handling Colors (ANSI)
-
-`formatter` 内で `line.getCell(x)` を使うと、各セルの色情報や文字スタイルにアクセスできます。
-
-```typescript
-session.getSnapshot({
-  formatter: (line, ctx) => {
-    let output = '';
-    for (let x = 0; x < line.length; x++) {
-      const cell = line.getCell(x);
-      if (!cell) continue;
-      // 前景色(fg)などの判定ロジックをここに記述
-      output += cell.getChars();
-    }
-    return output;
-  }
-});
-```
-
-### Human Intervention (Telnet)
-
-人間が外部から接続して、エージェントの操作を監視したり、割り込んだりできます。
-（実装予定: Telnetサーバー機能の統合）
-
-```bash
-# 別のターミナルから接続
-$ telnet localhost 3007
-```
+- `Enter`, `Backspace`, `Tab`, `Escape`
+- `ArrowUp`, `ArrowDown`, `ArrowRight`, `ArrowLeft`
+- `Home`, `End`, `PageUp`, `PageDown`, `Insert`, `Delete`
+- `F1` ～ `F12`
+- `Ctrl+C` (その他の `Ctrl+*` コンビネーションも可)
