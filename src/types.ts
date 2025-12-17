@@ -54,3 +54,17 @@ export interface ISnapshot {
 		rangeUsed: SnapshotRange;
 	};
 }
+
+// --- Shell Integration Types (OSC 133) ---
+
+export enum ShellIntegrationType {
+	PromptStart = "A",
+	CommandStart = "B",
+	CommandExecuted = "C",
+	CommandFinished = "D",
+}
+
+export interface IShellIntegrationEvent {
+	type: ShellIntegrationType;
+	params: string[];
+}

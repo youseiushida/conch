@@ -1,10 +1,14 @@
 import { Terminal } from "@xterm/headless";
 import { getCtrlChar, SpecialKeys } from "./keymap";
+import { BASH_INTEGRATION_SCRIPT, PWSH_INTEGRATION_SCRIPT } from "./scripts";
+import { encodeScriptForShell, waitForText } from "./utils";
+import { ShellIntegrationType } from "./types";
 import type {
 	IDisposable,
 	ISnapshot,
 	ITerminalBackend,
 	SnapshotOptions,
+	IShellIntegrationEvent,
 } from "./types";
 
 export interface ConchSessionOptions {
@@ -25,6 +29,8 @@ export class ConchSession implements IDisposable {
 	// イベントリスナー
 	private outputListeners: ((data: string) => void)[] = [];
 	private exitListeners: ((code: number, signal?: number) => void)[] = [];
+	private shellIntegrationListeners: ((event: IShellIntegrationEvent) => void)[] =
+		[];
 
 	constructor(backend: ITerminalBackend, options: ConchSessionOptions = {}) {
 		this.backend = backend;
@@ -71,6 +77,13 @@ export class ConchSession implements IDisposable {
 			});
 		});
 		this.disposables.push(exitDisposable);
+
+		// OSC 133 (Shell Integration) ハンドラの登録
+		const oscDisposable = this.terminal.parser.registerOscHandler(133, (data) => {
+			this.handleOsc133(data);
+			return true; // handled
+		});
+		this.disposables.push(oscDisposable);
 	}
 
 	// --- 2. Programmatic I/O API ---
@@ -92,6 +105,76 @@ export class ConchSession implements IDisposable {
 	public execute(command: string): void {
 		// 入力としての改行は '\r' が最も安全（全OS共通）
 		this.write(`${command}\r`);
+	}
+
+	/**
+	 * スクリプトをBase64エンコードして実行する（安全な注入）
+	 *
+	 * ⚠️ セキュリティ警告:
+	 * このメソッドはシェル上で任意のコードを実行します。
+	 * 信頼できるスクリプトのみを渡してください。
+	 *
+	 * @param script - 実行するシェルスクリプト
+	 * @param options.shell - ターゲットシェル ('bash' | 'pwsh')
+	 */
+	public unsafeInjectScript(
+		script: string,
+		options: { shell: "bash" | "pwsh" },
+	): void {
+		const command = encodeScriptForShell(script, options.shell);
+		this.execute(command);
+	}
+
+	/**
+	 * OSC 133 シェル統合を有効化する
+	 *
+	 * 既知のシェル向けプリセットスクリプトを注入し、有効化を確認します。
+	 *
+	 * ⚠️ 注意点:
+	 * 1. 成功確認は「注入スクリプトがエラーなく流れたか」の検証であり、
+	 *    「実際にOSC 133イベントが発火し始めたか」の検証ではありません。
+	 * 2. シェル自動判定は完全ではないため、可能な限り `shell` 引数を明示することを推奨します。
+	 *
+	 * @param shell - ターゲットシェル (省略時は processName から推測を試みるが、明示推奨)
+	 * @returns 成功した場合は true
+	 */
+	public async enableShellIntegration(
+		shell?: "bash" | "pwsh",
+	): Promise<boolean> {
+		const targetShell =
+			shell ??
+			(this.backend.processName.includes("pwsh") ||
+			this.backend.processName.includes("powershell")
+				? "pwsh"
+				: "bash");
+
+		let script = "";
+		let verifyCmd = "";
+		const sentinel = `__CONCH_OK_${Math.random().toString(36).slice(2)}`;
+
+		if (targetShell === "pwsh") {
+			script = PWSH_INTEGRATION_SCRIPT;
+			verifyCmd = `Write-Output "${sentinel}"`;
+		} else {
+			script = BASH_INTEGRATION_SCRIPT;
+			verifyCmd = `echo "${sentinel}"`;
+		}
+
+		// 1. スクリプト注入
+		this.unsafeInjectScript(script, { shell: targetShell });
+
+		// 2. 検証コマンド実行 (注入が成功していれば、これも実行されるはず)
+		// 少し待ってから実行したほうが安全かもしれないが、キューに入れば順次実行されるはず
+		this.execute(verifyCmd);
+
+		// 3. センチネル文字列の出現を待つ
+		try {
+			await waitForText(this, sentinel, { timeout: 5000 });
+			return true;
+		} catch (e) {
+			console.warn("[ConchSession] Shell integration verification failed:", e);
+			return false;
+		}
 	}
 
 	/**
@@ -272,6 +355,54 @@ export class ConchSession implements IDisposable {
 		};
 	}
 
+	/**
+	 * OSC 133 (Shell Integration) イベントの購読
+	 */
+	public onShellIntegration(
+		listener: (event: IShellIntegrationEvent) => void,
+	): IDisposable {
+		this.shellIntegrationListeners.push(listener);
+		return {
+			dispose: () => {
+				this.shellIntegrationListeners = this.shellIntegrationListeners.filter(
+					(l) => l !== listener,
+				);
+			},
+		};
+	}
+
+	/**
+	 * OSC 133 シーケンスの処理
+	 * Format: 133 ; TYPE [; Params...]
+	 */
+	private handleOsc133(data: string): void {
+		const parts = data.split(";");
+		const rawType = parts[0];
+		// Only emit known event types. Ignore unknown/extended markers for stability.
+		// This keeps `onShellIntegration` predictable for consumers (esp. run()).
+		switch (rawType) {
+			case ShellIntegrationType.PromptStart:
+			case ShellIntegrationType.CommandStart:
+			case ShellIntegrationType.CommandExecuted:
+			case ShellIntegrationType.CommandFinished:
+				break;
+			default:
+				return;
+		}
+
+		const type = rawType as ShellIntegrationType;
+		const params = parts.slice(1);
+
+		const event: IShellIntegrationEvent = {
+			type,
+			params,
+		};
+
+		this.shellIntegrationListeners.forEach((listener) => {
+			listener(event);
+		});
+	}
+
 	// 1-5. ライフサイクル管理
 	public dispose(): void {
 		this.disposed = true;
@@ -283,6 +414,8 @@ export class ConchSession implements IDisposable {
 		this.disposables = [];
 		this.outputListeners = [];
 		this.exitListeners = [];
+		this.shellIntegrationListeners = [];
+
 		// drain待機を解放
 		const waiters = this.drainWaiters;
 		this.drainWaiters = [];

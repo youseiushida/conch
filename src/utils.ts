@@ -9,6 +9,11 @@ export interface WaitOptions {
 /**
  * 指定された正規表現または文字列が、セッションのスナップショット（viewport）に含まれるまで待機する
  *
+ * ⚠️ 注意:
+ * スクロールバック（viewport外）に流れた文字列は検知できません。
+ * 大量の出力がある場合は、waitForSilence 等を併用するか、
+ * 将来的に scrollback 検索が実装されるのを待つ必要があります。
+ *
  * @param session - 監視対象のConchSession
  * @param pattern - 待機条件（文字列または正規表現）
  * @param options - タイムアウト設定など
@@ -288,4 +293,40 @@ export function findText(
 	});
 
 	return matches;
+}
+
+// --- Injection Helper ---
+
+/**
+ * スクリプトをBase64エンコードし、ターゲットシェルで実行するためのワンライナーを生成する
+ *
+ * ⚠️ Bash互換性に関する注意:
+ * 現在の実装は Linux/WSL 等の `base64 -d` コマンドを前提としています。
+ * macOS (BSD base64) の場合、`-d` オプションが使えない環境（`-D`が必要）では動作しない可能性があります。
+ *
+ * @param script - 注入するスクリプト
+ * @param shell - ターゲットシェル ('bash' | 'pwsh')
+ * @returns 実行用コマンド文字列
+ */
+export function encodeScriptForShell(
+	script: string,
+	shell: "bash" | "pwsh",
+): string {
+	// Node.js Buffer to Base64
+	const b64 = Buffer.from(script, "utf-8").toString("base64");
+
+	if (shell === "bash") {
+		// Use eval to execute in current shell context
+		// Default to 'base64 -d' (Linux/WSL standard)
+		// For macOS compatibility in future, we might need auto-detection or option
+		return `eval "$(echo '${b64}' | base64 -d)"`;
+	}
+
+	if (shell === "pwsh") {
+		// Use Invoke-Expression (iex)
+		// PowerShell expects UTF-16LE for some things but .NET string from Base64 is straightforward
+		return `$c=[System.Convert]::FromBase64String('${b64}');iex([System.Text.Encoding]::UTF8.GetString($c))`;
+	}
+
+	throw new Error(`Unsupported shell for injection: ${shell}`);
 }
