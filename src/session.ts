@@ -173,7 +173,8 @@ export class ConchSession implements IDisposable {
 
 		// 3. センチネル文字列の出現を待つ
 		try {
-			await waitForText(this, sentinel, { timeout: 5000 });
+			// WSLなどの遅い環境を考慮してタイムアウトを長めに設定
+			await waitForText(this, sentinel, { timeout: 15000 });
 			return true;
 		} catch (e) {
 			console.warn("[ConchSession] Shell integration verification failed:", e);

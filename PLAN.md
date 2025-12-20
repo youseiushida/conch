@@ -49,6 +49,7 @@
 - **完了検知について**:
     - 本PoCでは「コマンド完了待ち」は実装しない（エージェントがスナップショットを見て判断するWait & See方式）。
     - 将来的な拡張として、VSCodeのような「Shell Integration (OSC 133;A 等の不可視シーケンスによるプロンプト検知)」の導入を検討する（タスク6）。
+    - ✅ 追記: 現状は `ConchSession` の OSC133 ハンドラと `Conch.run()` により、OSC133 D（CommandFinished）を観測できる場合は完了検知できる。
 
 ## 2-4. `resize` メソッドの実装
 - [x] `ConchSession` に `resize(cols, rows)` を追加する
@@ -188,5 +189,5 @@
 - [x] `src/index.ts` の整理（実施済み）
 
 # タスク6: 高度なシェル統合と完了検知 (Future)
-- OSC 133 (Shell Integration) のハンドラを実装し、コマンド完了イベントを正確に検知できるようにする。
-- アーキテクチャの大幅変更は不要で、`ConchSession` にパーサーフックを追加する形で実装可能。
+- [x] OSC 133 (Shell Integration) のハンドラを実装し、コマンド完了イベントを正確に検知できるようにする。
+- [x] `ConchSession` にパーサーフックを追加する形で実装する。

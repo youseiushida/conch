@@ -3,6 +3,7 @@ export const SpecialKeys: { [key: string]: string } = {
 	Backspace: "\x7f",
 	Tab: "\t",
 	Escape: "\x1b",
+	Esc: "\x1b",
 
 	// Cursor
 	ArrowUp: "\x1b[A",

@@ -98,6 +98,7 @@ export interface ConchLaunchOptions {
 	timeoutMs?: number;
 	/** @deprecated Use timeoutMs */
 	timeout?: number;
+	autoDispose?: boolean;
 }
 
 // --- High Level API: Action Result (Conch) ---

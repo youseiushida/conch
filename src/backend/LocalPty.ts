@@ -66,14 +66,17 @@ export class LocalPty implements ITerminalBackend {
 
 		// Windows固有の初期化処理
 		if (os.platform() === "win32") {
-			// コードページをUTF-8に変更
-			this.write("chcp 65001\r");
-			// 画面クリア (chcpの出力メッセージを消すため)
-			this.write("Clear-Host\r");
-
-			// chcpの反映を少し待つ（簡易的）
-			// 本来は出力監視すべきだが、spawn完了としては一旦Waitを入れるだけでも効果あり
-			await new Promise((resolve) => setTimeout(resolve, 100));
+			const shellLower = this.shell.toLowerCase();
+			const isPowerShell = shellLower.includes("powershell") || shellLower.includes("pwsh");
+		
+			if (isPowerShell) {
+				// コードページをUTF-8に変更
+				this.write("chcp 65001\r");
+				// 画面クリア (chcpの出力メッセージを消すため)
+				this.write("Clear-Host\r");
+		
+				await new Promise((resolve) => setTimeout(resolve, 100));
+			}
 		}
 	}
 

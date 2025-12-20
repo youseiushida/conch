@@ -70,9 +70,19 @@ export class Conch implements IDisposable {
 		// Spawn AFTER wiring session listeners (to avoid losing early output).
 		await backend.spawn();
 
+		// Wait for the process to stabilize a bit (important for slow backends like WSL)
+		await waitForStable(session, 100, { timeout: 2000 });
+
 		const conch = new Conch(session, backend, {
 			timeoutMs: options.timeoutMs ?? options.timeout,
 		});
+
+		if (options.autoDispose) {
+			const cleanup = () => conch.dispose();
+			process.on('exit', cleanup);
+			process.on('SIGINT', () => { cleanup(); process.exit(); });
+			process.on('SIGTERM', () => { cleanup(); process.exit(); });
+		};			
 
 		if (options.shellIntegration?.enable) {
 			const ok = await session.enableShellIntegration(
