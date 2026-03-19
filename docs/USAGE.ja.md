@@ -87,7 +87,7 @@ if (snapshot.text.includes('> Selected Item')) {
 
 文字列を入力し、画面をキャプチャします。
 
-- **デフォルト待機**: `drain` (xtermが入力を処理し終わるのを待つ。高速。)
+- **デフォルト待機**: `change` (画面内容が変わるまで待つ。PTYエコーがスナップショットに反映されることを保証します。)
 
 ```typescript
 // 検索クエリを入力
@@ -102,7 +102,15 @@ await conch.typeAndSnapshot('enter', {
 ## 3. Shell Integration (OSC 133)
 
 最も信頼性の高いコマンド実行制御を行うには、Shell Integration を有効にしてください。
-これはシェルに小さなスクリプトを注入し、OSC 133 エスケープシーケンスを発行させることで、Conch がプロンプトの戻りや終了コードを正確に検知できるようにする機能です。
+これはシェルに小さなスクリプトを注入し、完全な A/B/C/D マーカーを含む OSC 133 エスケープシーケンスを発行させることで、Conch がプロンプトの戻りや終了コードを正確に検知できるようにする機能です。
+
+**マーカー**:
+- **A** (Prompt Start) -- プロンプト表示前に発行
+- **B** (Command Start) -- プロンプト表示後に発行（ユーザー入力領域の開始）
+- **C** (Command Executed) -- コマンド実行直前に発行（bash: DEBUG trap、pwsh: PSReadLine Enter ハンドラ）
+- **D** (Command Finished) -- 次のプロンプトで終了コードとともに発行
+
+`run()` は C/D の境界を使って決定的に出力を抽出します。ヒューリスティクスは不要です。
 
 ```typescript
 const conch = await Conch.launch({
@@ -208,6 +216,112 @@ try {
 - Docker デーモンに接続できる必要があります（Docker Desktop / dockerd）。
 - TTY モードでは stdout/stderr は単一ストリームにまとまります（分離できません）。
 - Docker 内で Shell Integration（OSC 133）を使う場合、`bash` を含むイメージ＋ `cmd: ["bash"]` の指定が必要になることが多いです（デフォルトは `/bin/sh`）。
+
+## 7. SSH Backend (`SshPty`)
+
+Local PTY や Docker の代わりに、SSH経由でリモートマシンをバックエンドとして利用できます:
+
+### パスワード認証
+
+```typescript
+import { Conch } from "@ushida_yosei/conch";
+
+const conch = await Conch.launch({
+  backend: {
+    type: "ssh",
+    host: "192.168.1.100",
+    port: 22,
+    username: "deploy",
+    password: "secret",
+  },
+  cols: 80,
+  rows: 24,
+  timeoutMs: 30_000,
+  shellIntegration: { enable: true, strict: false },
+});
+
+try {
+  const r = await conch.run('uname -a', { timeoutMs: 5000 });
+  console.log(r.outputText);
+} finally {
+  conch.dispose();
+}
+```
+
+### 鍵認証
+
+```typescript
+import { readFileSync } from "node:fs";
+
+const conch = await Conch.launch({
+  backend: {
+    type: "ssh",
+    host: "example.com",
+    username: "admin",
+    privateKey: readFileSync("/home/user/.ssh/id_ed25519"),
+    passphrase: "optional-passphrase", // 鍵が暗号化されていない場合は省略可
+  },
+  cols: 120,
+  rows: 40,
+  timeoutMs: 30_000,
+});
+```
+
+SSH エージェントを利用する場合は `agent`（例: `process.env.SSH_AUTH_SOCK`）を指定します。
+
+注意点:
+
+- `ssh2` ライブラリが必要です。
+- ホスト鍵検証はデフォルトで全て受け入れます（自動化用途向け）。厳密な検証が必要な場合は `hostVerifier` コールバックを指定してください。
+- 自動再接続はありません: SSH接続が切断された場合、`run()` は `onError` / `onExit` 経由で即座にrejectされます。
+- Shell Integration（OSC 133）はリモートシェルが `bash` または `pwsh` であれば動作します。
+
+## 8. TUI Application Support
+
+Conch にはターミナルクエリ自動応答機能が組み込まれており、vim、less、nano、top、tmux などの対話的なTUIアプリケーションをヘッドレス xterm 内で正しくレンダリングできます。これらのアプリは起動時にターミナル機能クエリ（DA1、DA2、CPR、DECRQM）を送信し、応答があるまでブロックします。Conch はこれらのクエリをインターセプトし、標準的な応答を PTY に書き戻すことで、アプリのブロックを自動的に解除します。
+
+```typescript
+// less を起動
+conch.execute('less /var/log/syslog');
+await conch.waitForStable({ durationMs: 500 });
+
+// ナビゲーション
+const { snapshot } = await conch.pressAndSnapshot('PageDown');
+console.log(snapshot.text);
+
+// 終了
+await conch.pressAndSnapshot('q');
+```
+
+```typescript
+// nano を起動
+conch.execute('nano myfile.txt');
+await conch.waitForStable({ durationMs: 500 });
+
+// テキストを入力
+await conch.typeAndSnapshot('Hello from Conch!');
+
+// 保存して終了 (Ctrl+O, Enter, Ctrl+X)
+conch.press('Ctrl+O');
+await conch.pressAndSnapshot('Enter');
+await conch.pressAndSnapshot('Ctrl+X');
+```
+
+```typescript
+// vim を起動 (t_RV= で約4秒の起動遅延を回避)
+conch.execute('vim --cmd "set t_RV=" file.txt');
+await conch.waitForStable({ durationMs: 1000 });
+
+// インサートモードに入り、テキストを入力
+conch.press('i');
+await conch.typeAndSnapshot('Hello from Conch!');
+
+// 保存して終了
+conch.press('Escape');
+await conch.pressAndSnapshot(':');
+await conch.typeAndSnapshot('wq');
+await conch.pressAndSnapshot('Enter');
+```
 
 ## Appendix: Available Key Names
 

@@ -21,7 +21,8 @@ Conch（コンク）は、ターミナルアプリケーションをプログラ
 *   **Flakiness（不安定さ）の排除:** `waitForText`, `waitForSilence`, `waitForStable` などの待機ユーティリティを標準装備。`sleep()` に頼ることなく、非同期なターミナル出力を確実にハンドリングできます。
 *   **人間らしい入力:** `Enter`, `Esc`, `Ctrl+C` などのキー入力や、自然なタイピングをシミュレートできます。
 *   **スナップショットエンジン:** 任意のタイミングでターミナルの「見た目（Visual State）」を取得し、ユーザーが実際に何を見ているかを検証できます。
-*   **拡張可能なバックエンド:** Local PTY と Docker をサポートし、将来的に SSH などにも拡張できる設計です。
+*   **TUIアプリサポート:** ターミナルクエリ自動応答機能（DA1, DA2, CPR, DECRQM）を内蔵しており、vim, less, nano, top などの対話的TUIアプリをヘッドレスモードで正しく描画できます。
+*   **拡張可能なバックエンド:** Local PTY、Docker、SSH をサポート。さらに他のバックエンドにも拡張可能な設計です。
 
 ## LLM/エージェントがCLI/TUIを“止めずに”扱うための基盤として
 
@@ -141,6 +142,80 @@ try {
 - TTY モードでは stdout/stderr は単一ストリームにまとまります（分離できません）。
 - Docker 内で Shell Integration（OSC 133）を使う場合、`bash` を含むイメージ＋ `cmd: ["bash"]` の指定が必要になることが多いです（デフォルトは `/bin/sh`）。
 
+## SSH Backend (SshPty)
+
+SSH 経由でリモートサーバー上のシェルをバックエンドとして利用できます。
+
+```typescript
+import { Conch } from "@ushida_yosei/conch";
+import { readFileSync } from "fs";
+
+const conch = await Conch.launch({
+  backend: {
+    type: "ssh",
+    host: "example.com",
+    username: "user",
+    privateKey: readFileSync("/path/to/key"),
+    // または: password: "secret",
+    // または: agent: process.env.SSH_AUTH_SOCK,
+  },
+  cols: 80,
+  rows: 24,
+  timeoutMs: 30_000,
+  shellIntegration: { enable: true, strict: false },
+});
+
+try {
+  const r = await conch.run('echo "hello from SSH"');
+  console.log(r.outputText); // "hello from SSH"
+  console.log(r.exitCode);   // 0
+} finally {
+  conch.dispose();
+}
+```
+
+注意点:
+
+- ピア依存として `ssh2` が必要です: `npm install ssh2`
+- パスワード認証、秘密鍵認証（パスフレーズ付き対応）、SSH エージェント認証をサポートしています。
+- 接続断は致命的エラーとして扱われます（自動再接続なし）。再接続するには新しいインスタンスを作成してください。
+- リモートシェルが bash の場合、SSH 経由でも Shell Integration（OSC 133）が動作します。
+- 自動化ユースケース向けに、ホスト鍵検証はデフォルトで無効です。厳密に検証する場合は `hostVerifier` を指定してください。
+
+## TUIアプリケーションサポート
+
+Conch はヘッドレスモードで対話的な TUI アプリケーション（vim, less, nano, top, tmux）を操作できます。内蔵のターミナルクエリ自動応答機能が、これらのアプリが起動時に送信する DA/CPR/DECRQM シーケンスを処理します。
+
+```typescript
+const conch = await Conch.launch({
+  backend: { type: "localPty", file: "bash", env: process.env },
+  cols: 80,
+  rows: 24,
+  timeoutMs: 30_000,
+});
+
+// vim を開いてテキストを入力し、保存して終了
+conch.execute('vim --cmd "set t_RV=" /tmp/test.txt');
+await conch.waitForText("~", { timeoutMs: 5_000 }); // vim の UI を待機
+
+conch.press("i");                        // インサートモード
+conch.type("Hello from Conch!");
+conch.press("Escape");
+conch.type(":wq");
+conch.press("Enter");
+await conch.waitForStable({ durationMs: 500 });
+
+conch.dispose();
+```
+
+| プログラム | 状態 | 備考 |
+|-----------|------|------|
+| vim/vi | ✅ | `--cmd "set t_RV="` を指定すると即座に描画される（指定しない場合、PTY バッファリングにより約4秒の遅延あり） |
+| less | ✅ | 代替バッファ、検索、PageDown すべて動作 |
+| nano | ✅ | 代替バッファ、テキスト入力、Ctrl+X 終了すべて動作 |
+| top | ✅ | バッチモード（`-b -n 1`）動作。インタラクティブモードも遅延付きで動作 |
+| tmux | ✅ | セッション作成/アタッチ、tmux 内コマンド、セッション後始末 |
+
 ## ドキュメント
 
 *   [**利用ガイド (USAGE.md)**](./docs/USAGE.ja.md): 詳細なコード例とベストプラクティス
@@ -150,7 +225,7 @@ try {
 ## ロードマップ
 
 *   [ ] **Interaction Layer:** 外部エージェント（MCP, WebSocketサーバー等）と接続するための抽象インターフェース
-*   [x] **Shell Integration (OSC 133):** コマンド境界（完了イベント）と終了コードを検知する機能
+*   [x] **Shell Integration (OSC 133):** フル A/B/C/D 対応によるコマンド境界（完了イベント）と終了コードの検知
 *   [ ] **Telnet/SSH Server:** 自動操作中のセッションに人間が介入・監視できるサーバー機能
 
 ## ライセンス

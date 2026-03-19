@@ -61,11 +61,34 @@ export interface ITerminalBackend extends IDisposable {
     - In TTY mode, stdout/stderr are combined into a single stream.
     - Shell Integration (OSC 133) typically requires an image with `bash` and `cmd: ["bash"]` (default is `/bin/sh`).
 
+### `SshPty`
+
+- **Dependency**: `ssh2`
+- **Overview**: Connects to a remote host via SSH and opens a PTY shell session. Uses the `ssh2` library to manage the connection lifecycle.
+- **Authentication**: Supports multiple methods -- any combination can be provided:
+    - `password`: Password authentication.
+    - `privateKey` (with optional `passphrase`): Public key authentication.
+    - `agent`: SSH agent forwarding (e.g., `SSH_AUTH_SOCK`).
+- **Features**:
+    - **Async Spawn**: `spawn()` connects to the SSH server, authenticates, and opens an interactive shell with PTY allocation.
+    - **Resize**: Uses `stream.setWindow(rows, cols, 0, 0)` to resize the remote PTY.
+    - **Safe Output Decoding**: Uses `StringDecoder` to decode UTF-8 safely across chunk boundaries.
+    - **Signal Mapping**: Maps POSIX signal names (HUP, INT, KILL, TERM, etc.) from `ssh2` stream exit events to numeric signal codes. Exit code follows Unix convention: `128 + signal` when killed by signal.
+    - **Error Propagation**: Implements `onError` for SSH connection errors, enabling `Conch.run()` to fail fast instead of waiting for timeout. Backend exit events (server disconnect) are also detected immediately.
+    - **Cleanup**: Idempotent `disposeAsync()` -- removes all stream/client handlers, closes the channel, and disconnects the client.
+- **No Auto-Reconnect**: If the SSH connection drops, the backend emits an error/exit event. There is no automatic reconnection -- the consumer should create a new instance.
+- **Host Key Verification**: Defaults to accept-all (`hostVerifier: () => true`) for automation use cases. Provide a custom `hostVerifier` callback for stricter verification in production.
+- **Notes**:
+    - Shell Integration (OSC 133) works if the remote shell is `bash` or `pwsh`.
+    - Connection tuning is available via `readyTimeout`, `keepaliveInterval`, `keepaliveCountMax`, and raw `connectOptions` for advanced ssh2 overrides.
+
 ## How to Add a New Backend
 
-To add `SshPty` or other custom backends in the future, follow these steps:
+To add custom backends, follow these steps:
 
 1. Create a new class that implements `ITerminalBackend`.
 2. In the constructor, only "store configuration" and do not cause side effects (connection or spawning).
 3. Implement the actual connection logic in the `spawn()` method and return a `Promise`.
 4. Fire stdout/stderr via `onData` without distinction.
+5. Optionally implement `onError` to enable fast failure in `Conch.run()`.
+6. Optionally implement `disposeAsync()` for awaitable cleanup.

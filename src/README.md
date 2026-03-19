@@ -20,7 +20,7 @@ This directory contains the core logic of Conch.
     - `cropText`, `findText`: Functions to extract information from snapshots.
     - `encodeScriptForShell`: Cross-platform (Linux/macOS) shell script injection helper.
 - **`backend/`**: Backend Adapters
-    - Contains backend implementations (e.g., `LocalPty`, `DockerPty`).
+    - Contains backend implementations (`LocalPty`, `DockerPty`, `SshPty`).
 - **`index.ts`**: Entry Point
     - Exports the public API of the library.
 
@@ -34,6 +34,7 @@ graph TD
     subgraph Backend [Backend Adapters]
         LP[LocalPty]
         DP[DockerPty]
+        SP[SshPty]
     end
 
     subgraph Core [Conch Core]
@@ -75,8 +76,10 @@ graph TD
 ### Core Responsibilities (Conch / ConchSession)
 - **High-Level Control**: Provides high-level flows like `run()` and `pressAndSnapshot()` that combine action, waiting, and snapshotting.
 - **Terminal State**: Accurately reflects and maintains output from the backend in the xterm buffer.
+- **Terminal Query Auto-Responder**: Intercepts terminal capability queries (DA1, DA2, CPR/DSR, DECRQM) from TUI applications (vim, less, nano, etc.) and writes standard responses back to the backend. Without this, xterm.js headless cannot answer these queries and TUI apps block on startup.
 - **Facts Provider**: Provides "facts" such as cursor position and viewport information through snapshots, not just text.
 - **Input Normalization**: Converts abstract operations like `press('Enter')` into appropriate escape sequences and sends them to the backend.
+- **Shell Integration (OSC 133)**: Injects scripts that emit full A/B/C/D markers. Bash uses a DEBUG trap for the C marker; PowerShell uses a PSReadLine Enter handler. The C/D boundary enables deterministic output extraction in `run()`.
 - **Consistency**: Guarantees timing consistency between asynchronous write operations and snapshot acquisition via `drain()`.
 
 ### Userland Responsibilities (Utils / User Code)

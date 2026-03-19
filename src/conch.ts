@@ -544,6 +544,20 @@ export class Conch implements IDisposable {
 			rejectDone?.(err);
 		});
 
+		// Subscribe to backend exit events so that a graceful disconnect (SSH
+		// server closes the connection) or unexpected shell exit is detected
+		// immediately rather than hanging until the run() timeout expires.
+		// This applies to all backends — local PTY death is equally unrecoverable
+		// during run(). C and D markers will never arrive after exit, so there is
+		// no point waiting; reject unconditionally regardless of strict mode.
+		const backendExitDisp = this.backend.onExit?.((code) => {
+			if (done) return;
+			done = true;
+			rejectDone?.(
+				new Error(`Backend exited during run() (exit code: ${code})`),
+			);
+		});
+
 		const outputDisp = this.session.onOutput((data) => {
 			if (!done) raw += data;
 		});
@@ -610,6 +624,7 @@ export class Conch implements IDisposable {
 			outputDisp.dispose();
 			oscDisp.dispose();
 			backendErrorDisp?.dispose();
+			backendExitDisp?.dispose();
 		}
 
 		let snapshot: ISnapshot | undefined;

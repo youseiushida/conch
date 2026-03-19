@@ -16,7 +16,8 @@
  * Run with: pnpm test:e2e
  */
 import { describe, it, expect, afterEach, beforeAll } from "vitest";
-import { execSync, readFileSync } from "node:child_process";
+import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { Conch } from "../../src/conch";
 import { SshPty } from "../../src/backend/SshPty";
@@ -45,8 +46,13 @@ function sshAvailable(): boolean {
 	const auth = getAuthOptions();
 	if (!auth.password && !auth.privateKey && !auth.agent) return false;
 	try {
+		const keyFlag = process.env.SSH_TEST_KEY
+			? `-i "${process.env.SSH_TEST_KEY}"`
+			: "";
+		// stdio:"pipe" captures stderr — no need for 2>/dev/null (which also
+		// breaks on Windows cmd.exe where /dev/null is not a valid path).
 		execSync(
-			`ssh -o BatchMode=yes -o ConnectTimeout=2 -o StrictHostKeyChecking=no -p ${SSH_PORT} ${SSH_USER}@${SSH_HOST} exit 2>/dev/null`,
+			`ssh -o BatchMode=yes -o ConnectTimeout=2 -o StrictHostKeyChecking=no ${keyFlag} -p ${SSH_PORT} ${SSH_USER}@${SSH_HOST} exit`,
 			{ stdio: "pipe", timeout: 5000 },
 		);
 		return true;

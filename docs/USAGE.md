@@ -85,7 +85,7 @@ if (snapshot.text.includes('> Selected Item')) {
 
 Types a string and captures the screen.
 
-- **Default Wait**: `drain` (Waits for input to be processed by xterm, fast)
+- **Default Wait**: `change` (Waits until the screen content updates, ensuring PTY echo is reflected)
 
 ```typescript
 // Type a search query
@@ -99,7 +99,15 @@ await conch.typeAndSnapshot('enter', {
 
 ## 3. Shell Integration (OSC 133)
 
-For the most reliable command execution, enable Shell Integration. This injects a small script into the shell to emit OSC 133 escape sequences, allowing Conch to detect exactly when a prompt returns and capture the exit code.
+For the most reliable command execution, enable Shell Integration. This injects a small script into the shell to emit OSC 133 escape sequences with full A/B/C/D markers, allowing Conch to detect exactly when a prompt returns and capture the exit code.
+
+**Markers**:
+- **A** (Prompt Start) -- emitted before prompt display
+- **B** (Command Start) -- emitted after prompt display (start of user input area)
+- **C** (Command Executed) -- emitted just before the command runs (bash: DEBUG trap, pwsh: PSReadLine Enter handler)
+- **D** (Command Finished) -- emitted at the next prompt with the exit code
+
+The C/D boundary is used by `run()` for deterministic output extraction -- no heuristics needed.
 
 ```typescript
 const conch = await Conch.launch({
@@ -205,6 +213,112 @@ Notes:
 - Requires a reachable Docker daemon (Docker Desktop / dockerd).
 - In TTY mode, stdout/stderr are combined into a single stream.
 - Shell Integration (OSC 133) in Docker typically requires an image with `bash` and `cmd: ["bash"]` (default is `/bin/sh`).
+
+## 7. SSH Backend (`SshPty`)
+
+You can run Conch against a remote machine over SSH:
+
+### Password Authentication
+
+```typescript
+import { Conch } from "@ushida_yosei/conch";
+
+const conch = await Conch.launch({
+  backend: {
+    type: "ssh",
+    host: "192.168.1.100",
+    port: 22,
+    username: "deploy",
+    password: "secret",
+  },
+  cols: 80,
+  rows: 24,
+  timeoutMs: 30_000,
+  shellIntegration: { enable: true, strict: false },
+});
+
+try {
+  const r = await conch.run('uname -a', { timeoutMs: 5000 });
+  console.log(r.outputText);
+} finally {
+  conch.dispose();
+}
+```
+
+### Key-based Authentication
+
+```typescript
+import { readFileSync } from "node:fs";
+
+const conch = await Conch.launch({
+  backend: {
+    type: "ssh",
+    host: "example.com",
+    username: "admin",
+    privateKey: readFileSync("/home/user/.ssh/id_ed25519"),
+    passphrase: "optional-passphrase", // omit if key is unencrypted
+  },
+  cols: 120,
+  rows: 40,
+  timeoutMs: 30_000,
+});
+```
+
+You can also use an SSH agent by setting `agent` (e.g., `process.env.SSH_AUTH_SOCK`).
+
+Notes:
+
+- Requires the `ssh2` library.
+- Host key verification defaults to accept-all (suitable for automation). Provide a `hostVerifier` callback for stricter verification.
+- No auto-reconnect: if the SSH connection drops, `run()` rejects immediately via `onError` / `onExit`.
+- Shell Integration (OSC 133) works if the remote shell is `bash` or `pwsh`.
+
+## 8. TUI Application Support
+
+Conch includes a terminal query auto-responder that enables interactive TUI applications (vim, less, nano, top, tmux, etc.) to render correctly inside headless xterm. These apps send terminal capability queries (DA1, DA2, CPR, DECRQM) on startup and block until the terminal responds. Conch intercepts these queries and writes standard responses back to the PTY, unblocking the apps automatically.
+
+```typescript
+// Launch less
+conch.execute('less /var/log/syslog');
+await conch.waitForStable({ durationMs: 500 });
+
+// Navigate
+const { snapshot } = await conch.pressAndSnapshot('PageDown');
+console.log(snapshot.text);
+
+// Quit
+await conch.pressAndSnapshot('q');
+```
+
+```typescript
+// Launch nano
+conch.execute('nano myfile.txt');
+await conch.waitForStable({ durationMs: 500 });
+
+// Type some text
+await conch.typeAndSnapshot('Hello from Conch!');
+
+// Save and exit (Ctrl+O, Enter, Ctrl+X)
+conch.press('Ctrl+O');
+await conch.pressAndSnapshot('Enter');
+await conch.pressAndSnapshot('Ctrl+X');
+```
+
+```typescript
+// Launch vim (use t_RV= to avoid ~4s startup delay)
+conch.execute('vim --cmd "set t_RV=" file.txt');
+await conch.waitForStable({ durationMs: 1000 });
+
+// Enter insert mode and type
+conch.press('i');
+await conch.typeAndSnapshot('Hello from Conch!');
+
+// Save and quit
+conch.press('Escape');
+await conch.pressAndSnapshot(':');
+await conch.typeAndSnapshot('wq');
+await conch.pressAndSnapshot('Enter');
+```
 
 ## Appendix: Available Key Names
 

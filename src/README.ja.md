@@ -22,7 +22,7 @@ Conch のコアロジックが格納されているディレクトリです。
     - `cropText`, `findText`: スナップショットから情報を抽出する関数群。
     - `encodeScriptForShell`: クロスプラットフォーム（Linux/macOS）対応のシェルスクリプト注入ヘルパー。
 - **`backend/`**: バックエンドアダプター
-    - バックエンド実装（`LocalPty`, `DockerPty`）が含まれます。
+    - バックエンド実装（`LocalPty`, `DockerPty`, `SshPty`）が含まれます。
 - **`index.ts`**: エントリーポイント
     - ライブラリの公開APIをexportしています。
 
@@ -36,6 +36,7 @@ graph TD
     subgraph Backend [Backend Adapters]
         LP[LocalPty]
         DP[DockerPty]
+        SP[SshPty]
     end
 
     subgraph Core [Conch Core]
@@ -77,8 +78,10 @@ graph TD
 ### Coreの責務 (Conch / ConchSession)
 - **High-Level Control**: `run()` や `pressAndSnapshot()` など、操作と待機、スナップショット取得を一連のフローとして提供します。
 - **Terminal State**: バックエンドからの出力を正確にxtermバッファに反映し維持します。
+- **Terminal Query Auto-Responder**: TUIアプリケーション（vim、less、nano等）からのターミナル機能クエリ（DA1、DA2、CPR/DSR、DECRQM）をインターセプトし、標準的な応答をバックエンドに書き戻します。これがないと、xterm.js headless はこれらのクエリに応答できず、TUIアプリが起動時にブロックします。
 - **Facts Provider**: スナップショットを通じて、テキストだけでなくカーソル位置、ビューポート情報などの「事実」を提供します。
 - **Input Normalization**: `press('Enter')` などの抽象的な操作を、適切なエスケープシーケンスに変換してバックエンドに送ります。
+- **Shell Integration (OSC 133)**: 完全な A/B/C/D マーカーを発行するスクリプトを注入します。Bash は C マーカーに DEBUG trap を使用し、PowerShell は PSReadLine の Enter ハンドラを使用します。C/D の境界により、`run()` で決定的な出力抽出が可能になります。
 - **Consistency**: `drain()` により、非同期な書き込み処理とスナップショット取得のタイミング整合性を保証します。
 
 ### Userlandの責務 (Utils / User Code)
