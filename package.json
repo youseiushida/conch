@@ -1,6 +1,6 @@
 {
   "name": "@ushida_yosei/conch",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Playwright for Terminals: A robust headless terminal driver for automating and testing TUI applications.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -56,11 +56,20 @@
     "access": "public"
   },
   "dependencies": {
-    "@xterm/headless": "^5.5.0",
-    "@lydell/node-pty": "1.1.0"
+    "@lydell/node-pty": "1.1.0",
+    "@xterm/headless": "^5.5.0"
+  },
+  "peerDependencies": {
+    "dockerode": "^4.0.9"
+  },
+  "peerDependenciesMeta": {
+    "dockerode": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@biomejs/biome": "^2.3.8",
+    "@types/dockerode": "^3.3.47",
     "@types/node": "^25.0.0",
     "tsup": "^8.5.1",
     "tsx": "^4.21.0",

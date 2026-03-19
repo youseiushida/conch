@@ -22,7 +22,7 @@ Conch のコアロジックが格納されているディレクトリです。
     - `cropText`, `findText`: スナップショットから情報を抽出する関数群。
     - `encodeScriptForShell`: クロスプラットフォーム（Linux/macOS）対応のシェルスクリプト注入ヘルパー。
 - **`backend/`**: バックエンドアダプター
-    - PTYの実装（`LocalPty`）が含まれます。
+    - バックエンド実装（`LocalPty`, `DockerPty`）が含まれます。
 - **`index.ts`**: エントリーポイント
     - ライブラリの公開APIをexportしています。
 
@@ -35,7 +35,7 @@ Coreは正確な画面状態の維持に徹し、意味付けはUserland（テ�
 graph TD
     subgraph Backend [Backend Adapters]
         LP[LocalPty]
-        DP[DockerPty Future]
+        DP[DockerPty]
     end
 
     subgraph Core [Conch Core]

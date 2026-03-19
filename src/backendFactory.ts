@@ -12,13 +12,19 @@ function isTerminalBackend(x: unknown): x is ITerminalBackend {
 		"onExit",
 		"dispose",
 	] as const;
-	return requiredFns.every((k) => typeof o[k] === "function");
+	if (!requiredFns.every((k) => typeof o[k] === "function")) return false;
+
+	// Guard required metadata too (used by ConchSession.enableShellIntegration()).
+	const id = (o as { id?: unknown }).id;
+	const processName = (o as { processName?: unknown }).processName;
+	const hasId = typeof id === "string" || typeof id === "number";
+	return hasId && typeof processName === "string";
 }
 
-export function createBackend(
+export async function createBackend(
 	backend: BackendConfig | ITerminalBackend,
 	options: { cols?: number; rows?: number },
-): ITerminalBackend {
+): Promise<ITerminalBackend> {
 	// If an instance is provided, use as-is (duck typing)
 	if (isTerminalBackend(backend)) return backend;
 
@@ -36,6 +42,24 @@ export function createBackend(
 		});
 	}
 
+	if (config.type === "docker") {
+		// Dynamic import: dockerode is only loaded when the Docker backend is actually used.
+		const { DockerPty } = await import("./backend/DockerPty");
+		return new DockerPty({
+			image: config.image,
+			cmd: config.cmd,
+			workdir: config.workdir,
+			env: config.env,
+			name: config.name,
+			user: config.user,
+			autoRemove: config.autoRemove,
+			docker: config.docker,
+			cols: options.cols,
+			rows: options.rows,
+		});
+	}
+
 	// Exhaustiveness guard for future backend types
-	throw new Error(`Unsupported backend config: ${config.type}`);
+	const _exhaustive: never = config;
+	throw new Error(`Unsupported backend config: ${String((_exhaustive as BackendConfig).type)}`);
 }

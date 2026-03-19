@@ -21,7 +21,7 @@ Conch（コンク）は、ターミナルアプリケーションをプログラ
 *   **Flakiness（不安定さ）の排除:** `waitForText`, `waitForSilence`, `waitForStable` などの待機ユーティリティを標準装備。`sleep()` に頼ることなく、非同期なターミナル出力を確実にハンドリングできます。
 *   **人間らしい入力:** `Enter`, `Esc`, `Ctrl+C` などのキー入力や、自然なタイピングをシミュレートできます。
 *   **スナップショットエンジン:** 任意のタイミングでターミナルの「見た目（Visual State）」を取得し、ユーザーが実際に何を見ているかを検証できます。
-*   **拡張可能なバックエンド:** デフォルトの Local PTY に加え、将来的に Docker や SSH への対応も可能な設計になっています。
+*   **拡張可能なバックエンド:** Local PTY と Docker をサポートし、将来的に SSH などにも拡張できる設計です。
 
 ## LLM/エージェントがCLI/TUIを“止めずに”扱うための基盤として
 
@@ -108,16 +108,49 @@ async function main() {
 main();
 ```
 
+## Docker Backend (DockerPty)
+
+Local PTY の代わりに Docker コンテナをバックエンドとして利用できます。
+
+```typescript
+import { Conch } from "@ushida_yosei/conch";
+
+const conch = await Conch.launch({
+  backend: {
+    type: "docker",
+    image: "alpine:latest",
+    cmd: ["/bin/sh"], // デフォルト
+    autoRemove: true,
+  },
+  cols: 80,
+  rows: 24,
+  timeoutMs: 30_000,
+});
+
+try {
+  const r = await conch.run('echo "hello from docker"', { strict: false });
+  console.log(r.outputText);
+} finally {
+  conch.dispose();
+}
+```
+
+注意点:
+
+- Docker デーモンに接続できる必要があります（Docker Desktop / dockerd）。
+- TTY モードでは stdout/stderr は単一ストリームにまとまります（分離できません）。
+- Docker 内で Shell Integration（OSC 133）を使う場合、`bash` を含むイメージ＋ `cmd: ["bash"]` の指定が必要になることが多いです（デフォルトは `/bin/sh`）。
+
 ## ドキュメント
 
 *   [**利用ガイド (USAGE.md)**](./docs/USAGE.ja.md): 詳細なコード例とベストプラクティス
-*   [**API リファレンス (API.md)**](./docs/API.ja.md): `ConchSession`, `LocalPty`, ユーティリティ関数の詳細仕様
+*   [**API リファレンス (API.md)**](./docs/API.ja.md): `Conch`、バックエンド（`LocalPty` / `DockerPty`）、ユーティリティ関数の詳細仕様
 *   [**ソースコード解説 (src/README.md)**](./src/README.ja.md): 内部アーキテクチャの解説
 
 ## ロードマップ
 
 *   [ ] **Interaction Layer:** 外部エージェント（MCP, WebSocketサーバー等）と接続するための抽象インターフェース
-*   [ ] **Shell Integration:** OSC 133 をサポートし、コマンドの完了イベントを正確に検知する機能
+*   [x] **Shell Integration (OSC 133):** コマンド境界（完了イベント）と終了コードを検知する機能
 *   [ ] **Telnet/SSH Server:** 自動操作中のセッションに人間が介入・監視できるサーバー機能
 
 ## ライセンス

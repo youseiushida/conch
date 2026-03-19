@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach, Mock } from 'vitest';
 import { LocalPty } from '../src/backend/LocalPty';
-import * as os from 'os';
+import * as os from 'node:os';
 
 // Mock node-pty
 const mockPtyProcess = {
@@ -20,8 +20,8 @@ vi.mock('@lydell/node-pty', () => {
 });
 
 // Mock os to control platform
-vi.mock('os', async () => {
-  const actual = await vi.importActual<typeof os>('os');
+vi.mock('node:os', async () => {
+  const actual = await vi.importActual<typeof os>('node:os');
   return {
     ...actual,
     platform: vi.fn(),
@@ -64,6 +64,7 @@ describe('LocalPty', () => {
 
     it('spawn() on Windows should inject chcp 65001', async () => {
       (os.platform as Mock).mockReturnValue('win32');
+      pty = new LocalPty('powershell.exe');
       
       await pty.spawn();
 

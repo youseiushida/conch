@@ -17,6 +17,20 @@ export interface ITerminalBackend extends IDisposable {
 	// イベント
 	onData(listener: (data: string) => void): IDisposable;
 	onExit(listener: (code: number, signal?: number) => void): IDisposable;
+	/**
+	 * Optional async disposal hook.
+	 *
+	 * Keep `dispose()` synchronous for signal handlers / process exit hooks,
+	 * but allow callers (tests/CI/cleanup) to await full backend shutdown.
+	 */
+	disposeAsync?(): Promise<void>;
+	/**
+	 * Optional fatal error event.
+	 *
+	 * Backends can emit this when the underlying connection/transport breaks
+	 * (e.g. docker attach stream errors), allowing `Conch.run()` to fail fast.
+	 */
+	onError?(listener: (err: Error) => void): IDisposable;
 
 	// メタデータ
 	readonly id: string | number; // PID or ContainerID
@@ -74,15 +88,26 @@ export interface IShellIntegrationEvent {
 
 // --- High Level API Types (Conch) ---
 
-export type BackendConfig = {
+export type BackendConfig = 
+| {
 	type: "localPty";
 	file?: string;
 	args?: string[];
 	cwd?: string;
 	env?: NodeJS.ProcessEnv;
-};
+  }
+| {
+	type: "docker";
+	image: string;
+	cmd?: string[];
+	workdir?: string;
+	env?: Record<string, string>;
+	name?: string;
+	user?: string;
+	autoRemove?: boolean;
+	docker?: import("dockerode").DockerOptions;
+  };
 // | { type: 'ssh'; ... }
-// | { type: 'docker'; ... }
 
 export interface ConchLaunchOptions {
 	cols?: number;
@@ -150,6 +175,13 @@ export interface RunOptions {
 	timeoutMs?: number;
 	/** @deprecated Use timeoutMs */
 	timeout?: number;
+	/**
+	 * How to handle fatal backend errors during `run()`.
+	 *
+	 * - "reject" (default): fail fast with the backend error.
+	 * - "ignore": keep current behavior (wait for OSC133/timeout) and only notify via onError.
+	 */
+	backendError?: "reject" | "ignore";
 	/**
 	 * If true, require OSC 133 D (exit code).
 	 * - When D is not observed before timeout, reject.\n

@@ -6,7 +6,7 @@ This document is the public API specification for Conch, based on the code in `s
 Currently, main classes and functions are exported from `src/index.ts`.
 
 ```typescript
-import { Conch, ConchSession, LocalPty, waitForText, waitForStable } from '@ushida_yosei/conch';
+import { Conch, ConchSession, LocalPty, DockerPty, waitForText, waitForStable } from '@ushida_yosei/conch';
 ```
 
 ---
@@ -19,16 +19,21 @@ The primary entry point for using the library. It wraps `ConchSession` and provi
 
 #### `Conch.launch(options): Promise<Conch>`
 Creates and starts a new Conch instance.
-- `options.backend`: `{ type: 'localPty', ... }` or an `ITerminalBackend` instance.
+- `options.backend`: `{ type: 'localPty' | 'docker', ... }` or an `ITerminalBackend` instance.
+- `options.shellIntegration`: Optional OSC 133 injection settings (recommended for reliable `run()` exit codes).
+- `options.autoDispose`: If true, disposes the session on process exit signals.
 - `options.timeoutMs`: Default timeout for operations.
 
 ### Methods
 
 #### `run(command: string, options?): Promise<RunResult>`
 Executes a command and waits for completion.
-- Uses OSC 133 (Shell Integration) if available to detect exact command completion.
-- Falls back to timeout if OSC 133 is not detected.
-- Returns exit code, output text, and snapshots.
+- Uses OSC 133 (Shell Integration) if available to detect exact command completion and exit code.
+- If OSC 133 D is not observed:
+  - `strict: false` (default): resolves after `timeoutMs` with `exitCode: undefined` (`meta.method: "fallback"`).
+  - `strict: true`: rejects on timeout.
+- If the backend emits a fatal error via `ITerminalBackend.onError`, `run()` can fail fast (default). Use `backendError: "ignore"` to keep the timeout-based fallback.
+- Returns exit code (when available), output text, and snapshots (`snapshot: "viewport" | "all" | "none"`).
 
 #### `pressAndSnapshot(key: string, options?): Promise<ActionResult>`
 Presses a key and waits for a screen update (default).
@@ -58,6 +63,7 @@ export interface ITerminalBackend extends IDisposable {
   // Lifecycle
   spawn(): Promise<void>;
   dispose(): void;
+  disposeAsync?(): Promise<void>;
 
   // I/O
   write(data: string): void;
@@ -66,10 +72,37 @@ export interface ITerminalBackend extends IDisposable {
   // Events
   onData(listener: (data: string) => void): IDisposable;
   onExit(listener: (code: number, signal?: number) => void): IDisposable;
+  onError?(listener: (err: Error) => void): IDisposable;
 
   readonly id: string | number;
   readonly processName: string;
 }
+```
+
+### `BackendConfig`
+
+You can pass a backend configuration object to `Conch.launch({ backend: ... })`:
+
+```ts
+export type BackendConfig =
+  | {
+      type: "localPty";
+      file?: string;
+      args?: string[];
+      cwd?: string;
+      env?: NodeJS.ProcessEnv;
+    }
+  | {
+      type: "docker";
+      image: string;
+      cmd?: string[];
+      workdir?: string;
+      env?: Record<string, string>;
+      name?: string;
+      user?: string;
+      autoRemove?: boolean;
+      docker?: import("dockerode").DockerOptions;
+    };
 ```
 
 ### Snapshot Types
@@ -153,6 +186,16 @@ Local process backend wrapping `node-pty`.
 Starts the process.
 - On Windows, waits for UTF-8 setting (`chcp 65001`) and screen clear to complete.
 - Throws error if called on a disposed instance.
+
+---
+
+## `src/backend/DockerPty.ts` (Backend: `DockerPty`)
+
+Docker container backend wrapping `dockerode`.
+
+- Runs a container in TTY mode and attaches to it as a single read/write stream.
+- `autoRemove` defaults to `true`.
+- In TTY mode, stdout/stderr are combined into a single stream.
 
 ---
 

@@ -20,7 +20,7 @@ Think of it as **"Playwright for Terminals"**.
 *   **Flakiness-Free Waits:** Built-in utilities like `waitForText`, `waitForSilence`, and `waitForStable` help you handle asynchronous terminal output reliably without random `sleep()`.
 *   **Human-like Input:** Simulate key presses (`Enter`, `Esc`, `Ctrl+C`) and typing naturally.
 *   **Snapshot Engine:** Capture the "visual" state of the terminal at any moment to verify what the user actually sees.
-*   **Pluggable Backend:** Designed to support Local PTY (default), and extensible for Docker or SSH in the future.
+*   **Pluggable Backends:** Supports Local PTY and Docker today, and is extensible for SSH in the future.
 
 ## Using Conch as an LLM/Agent Foundation (CLI/TUI that doesn’t get stuck)
 
@@ -107,16 +107,49 @@ async function main() {
 main();
 ```
 
+## Docker Backend (DockerPty)
+
+You can run Conch against a Docker container instead of a local PTY.
+
+```typescript
+import { Conch } from "@ushida_yosei/conch";
+
+const conch = await Conch.launch({
+  backend: {
+    type: "docker",
+    image: "alpine:latest",
+    cmd: ["/bin/sh"], // default
+    autoRemove: true,
+  },
+  cols: 80,
+  rows: 24,
+  timeoutMs: 30_000,
+});
+
+try {
+  const r = await conch.run('echo "hello from docker"', { strict: false });
+  console.log(r.outputText);
+} finally {
+  conch.dispose();
+}
+```
+
+Notes:
+
+- Requires a reachable Docker daemon (Docker Desktop / dockerd).
+- In TTY mode, stdout/stderr are combined into a single stream.
+- Shell Integration (OSC 133) in Docker usually requires an image with `bash` and `cmd: ["bash"]` (default is `/bin/sh`).
+
 ## Documentation
 
 *   [**Usage Guide (USAGE.md)**](./docs/USAGE.md): Detailed examples and best practices.
-*   [**API Reference (API.md)**](./docs/API.md): Complete API documentation for `ConchSession`, `LocalPty`, and utilities.
+*   [**API Reference (API.md)**](./docs/API.md): Complete API documentation for `Conch`, backends (`LocalPty` / `DockerPty`), and utilities.
 *   [**Source Docs (src/README.md)**](./src/README.md): Internal architecture overview.
 
 ## Roadmap
 
 *   [ ] **Interaction Layer:** Abstract interface for connecting external agents (MCP, WebSocket servers).
-*   [ ] **Shell Integration:** Support for OSC 133 to detect command completion events.
+*   [x] **Shell Integration (OSC 133):** Detect command completion events and exit codes.
 *   [ ] **Telnet/SSH Server:** Built-in server to allow human intervention or monitoring of automated sessions.
 
 ## License

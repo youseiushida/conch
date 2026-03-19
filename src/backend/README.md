@@ -12,6 +12,11 @@ export interface ITerminalBackend extends IDisposable {
   // Lifecycle
   spawn(): Promise<void>; // Start process (async)
   dispose(): void;
+  /**
+   * Optional async disposal hook.
+   * Useful for awaiting full backend shutdown (e.g., Docker container stop/remove).
+   */
+  disposeAsync?(): Promise<void>;
 
   // I/O
   write(data: string): void;
@@ -20,6 +25,11 @@ export interface ITerminalBackend extends IDisposable {
   // Events
   onData(listener: (data: string) => void): IDisposable;
   onExit(listener: (code: number, signal?: number) => void): IDisposable;
+  /**
+   * Optional fatal backend error event.
+   * When provided, `Conch.run()` can fail fast instead of waiting for timeout.
+   */
+  onError?(listener: (err: Error) => void): IDisposable;
 
   // Metadata
   readonly id: string | number; // PID or ContainerID
@@ -38,9 +48,22 @@ export interface ITerminalBackend extends IDisposable {
     - **Windows Support**: On Windows, it automatically executes `chcp 65001` to start in UTF-8 mode and waits for initialization (screen clear) to complete. This prevents character encoding issues.
     - **Safety**: Calling `spawn()` on a disposed instance throws an error to prevent invalid states.
 
+### `DockerPty`
+
+- **Dependency**: `dockerode`
+- **Overview**: Runs a shell inside a Docker container and attaches to it like a PTY (TTY mode).
+- **Features**:
+    - **Async Spawn**: Creates + starts a container and attaches a stream.
+    - **Resize**: Calls `container.resize({ w, h })`.
+    - **Safe Output Decoding**: Uses `StringDecoder` to decode UTF-8 safely across chunk boundaries.
+    - **Cleanup**: Best-effort stop/remove on spawn failure, and idempotent `disposeAsync()` for awaited cleanup.
+- **Notes**:
+    - In TTY mode, stdout/stderr are combined into a single stream.
+    - Shell Integration (OSC 133) typically requires an image with `bash` and `cmd: ["bash"]` (default is `/bin/sh`).
+
 ## How to Add a New Backend
 
-To add `DockerPty` or `SshPty` in the future, follow these steps:
+To add `SshPty` or other custom backends in the future, follow these steps:
 
 1. Create a new class that implements `ITerminalBackend`.
 2. In the constructor, only "store configuration" and do not cause side effects (connection or spawning).

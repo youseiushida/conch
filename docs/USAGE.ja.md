@@ -26,15 +26,17 @@ const conch = await Conch.launch({
   rows: 24,
   // 全操作のデフォルトタイムアウト
   timeoutMs: 30_000,
+  // 推奨: `run()` の完了検知と終了コード取得を安定させる（OSC 133）
+  shellIntegration: { enable: true, strict: false },
 });
 
 try {
   // 2. コマンドを実行し、完了するまで待機する
-  // デフォルトでは、出力が落ち着くまで待機します（fallbackモード）。
-  const result = await conch.run('echo "Hello Conch"');
+  // Shell Integration が有効なら、`run()` で実際の終了コードを取得できます。
+  const result = await conch.run('echo "Hello Conch"', { timeoutMs: 5000 });
   
   console.log(result.outputText); // "Hello Conch"
-  console.log(result.exitCode);   // undefined (Shell Integrationが無効な場合)
+  console.log(result.exitCode);   // 0 (Shell Integrationが有効な場合)
 
 } finally {
   // 3. プロセスを終了するために必ず dispose を呼ぶ
@@ -53,7 +55,10 @@ Conch の高レベルメソッドは、「操作を行い、特定の状態（�
 - **戻り値**: `RunResult` (exitCode, outputText, snapshot)
 - **待機戦略**:
   - **Shell Integration** が有効な場合: コマンド完了イベント (OSC 133) を正確に待ちます。
-  - 無効な場合: 出力が止まるのを待ちます (fallback)。
+  - 無効な場合: `timeoutMs` まで待ちます。
+    - `strict: false`（デフォルト）: `exitCode: undefined` で解決します（`meta.method: "fallback"`）。
+    - `strict: true`: タイムアウトでrejectします。
+  - バックエンドが `ITerminalBackend.onError` を提供する場合、`run()` はデフォルトでタイムアウトを待たずに失敗できます。従来通りタイムアウトfallbackにしたい場合は `backendError: "ignore"` を指定します。
 
 ```typescript
 const { exitCode, outputText } = await conch.run('ls -la', {
@@ -167,6 +172,42 @@ session.write('ls\r'); // 生の書き込み
 // 待機は手動で行う必要があります
 await waitForText(session, 'package.json');
 ```
+
+## 6. Docker Backend (`DockerPty`)
+
+Local PTY の代わりに Docker コンテナをバックエンドとして利用できます:
+
+```typescript
+import { Conch } from "@ushida_yosei/conch";
+
+const conch = await Conch.launch({
+  backend: {
+    type: "docker",
+    image: "alpine:latest",
+    cmd: ["/bin/sh"],
+    autoRemove: true,
+  },
+  cols: 80,
+  rows: 24,
+  timeoutMs: 30_000,
+});
+
+try {
+  const r = await conch.run('echo "hello from docker"', {
+    timeoutMs: 1000,
+    strict: false,
+  });
+  console.log(r.outputText);
+} finally {
+  conch.dispose();
+}
+```
+
+注意点:
+
+- Docker デーモンに接続できる必要があります（Docker Desktop / dockerd）。
+- TTY モードでは stdout/stderr は単一ストリームにまとまります（分離できません）。
+- Docker 内で Shell Integration（OSC 133）を使う場合、`bash` を含むイメージ＋ `cmd: ["bash"]` の指定が必要になることが多いです（デフォルトは `/bin/sh`）。
 
 ## Appendix: Available Key Names
 

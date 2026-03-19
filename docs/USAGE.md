@@ -24,15 +24,17 @@ const conch = await Conch.launch({
   rows: 24,
   // Default timeout for all operations
   timeoutMs: 30_000,
+  // Recommended: enables precise `run()` completion + exit codes (OSC 133)
+  shellIntegration: { enable: true, strict: false },
 });
 
 try {
   // 2. Run a command and wait for it to finish
-  // By default, this waits for output to settle (fallback mode).
-  const result = await conch.run('echo "Hello Conch"');
+  // With Shell Integration enabled, `run()` can return the real exit code.
+  const result = await conch.run('echo "Hello Conch"', { timeoutMs: 5000 });
   
   console.log(result.outputText); // "Hello Conch"
-  console.log(result.exitCode);   // undefined (unless Shell Integration is enabled)
+  console.log(result.exitCode);   // 0 (when Shell Integration is enabled)
 
 } finally {
   // 3. Always dispose to kill the process
@@ -51,7 +53,10 @@ Executes a shell command and waits for completion.
 - **Returns**: `RunResult` (exitCode, outputText, snapshot)
 - **Wait Strategy**:
   - If **Shell Integration** is enabled: Waits for the exact command completion event (OSC 133).
-  - Otherwise: Waits for output to stop (fallback).
+  - Otherwise: Waits until `timeoutMs`.
+    - `strict: false` (default): resolves with `exitCode: undefined` (`meta.method: "fallback"`).
+    - `strict: true`: rejects on timeout.
+  - If the backend supports `ITerminalBackend.onError`, `run()` can fail fast by default. Use `backendError: "ignore"` to keep the timeout-based fallback.
 
 ```typescript
 const { exitCode, outputText } = await conch.run('ls -la', {
@@ -164,6 +169,42 @@ session.write('ls\r'); // Raw write
 // You must handle waiting manually
 await waitForText(session, 'package.json');
 ```
+
+## 6. Docker Backend (`DockerPty`)
+
+You can run Conch against a Docker container instead of a local PTY:
+
+```typescript
+import { Conch } from "@ushida_yosei/conch";
+
+const conch = await Conch.launch({
+  backend: {
+    type: "docker",
+    image: "alpine:latest",
+    cmd: ["/bin/sh"],
+    autoRemove: true,
+  },
+  cols: 80,
+  rows: 24,
+  timeoutMs: 30_000,
+});
+
+try {
+  const r = await conch.run('echo "hello from docker"', {
+    timeoutMs: 1000,
+    strict: false,
+  });
+  console.log(r.outputText);
+} finally {
+  conch.dispose();
+}
+```
+
+Notes:
+
+- Requires a reachable Docker daemon (Docker Desktop / dockerd).
+- In TTY mode, stdout/stderr are combined into a single stream.
+- Shell Integration (OSC 133) in Docker typically requires an image with `bash` and `cmd: ["bash"]` (default is `/bin/sh`).
 
 ## Appendix: Available Key Names
 

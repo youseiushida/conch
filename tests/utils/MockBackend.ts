@@ -9,10 +9,12 @@ export class MockBackend implements ITerminalBackend {
   public write = vi.fn();
   public resize = vi.fn();
   public dispose = vi.fn();
+  public disposeAsync = vi.fn().mockResolvedValue(undefined);
   public spawn = vi.fn().mockResolvedValue(undefined);
 
   private dataListeners: ((data: string) => void)[] = [];
   private exitListeners: ((code: number, signal?: number) => void)[] = [];
+  private errorListeners: ((err: Error) => void)[] = [];
 
   public onData(listener: (data: string) => void): IDisposable {
     this.dataListeners.push(listener);
@@ -32,6 +34,15 @@ export class MockBackend implements ITerminalBackend {
     };
   }
 
+  public onError(listener: (err: Error) => void): IDisposable {
+    this.errorListeners.push(listener);
+    return {
+      dispose: () => {
+        this.errorListeners = this.errorListeners.filter((l) => l !== listener);
+      },
+    };
+  }
+
   // Helper to simulate incoming data from backend
   public emitData(data: string) {
     this.dataListeners.forEach(l => l(data));
@@ -40,5 +51,10 @@ export class MockBackend implements ITerminalBackend {
   // Helper to simulate backend exit
   public emitExit(code: number, signal?: number) {
     this.exitListeners.forEach(l => l(code, signal));
+  }
+
+  // Helper to simulate fatal backend error
+  public emitError(err: Error) {
+    this.errorListeners.forEach((l) => l(err));
   }
 }

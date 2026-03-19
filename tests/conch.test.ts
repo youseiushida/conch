@@ -59,6 +59,43 @@ describe("Conch (Facade)", () => {
 		conch.dispose();
 	});
 
+	it("run() should reject immediately on fatal backend error by default", async () => {
+		const backend = new MockBackend();
+		backend.write.mockImplementation((_data: string) => {
+			backend.emitError(new Error("fatal backend error"));
+		});
+
+		const conch = await Conch.launch({ backend, timeoutMs: 1000 });
+
+		await expect(conch.run("cmd", { timeoutMs: 1000 })).rejects.toThrow(
+			"fatal backend error",
+		);
+
+		conch.dispose();
+	});
+
+	it("run() should ignore fatal backend error when backendError: 'ignore'", async () => {
+		const backend = new MockBackend();
+		backend.write.mockImplementation((_data: string) => {
+			backend.emitError(new Error("fatal backend error"));
+			backend.emitData("some output\r\n");
+		});
+
+		const conch = await Conch.launch({ backend, timeoutMs: 20 });
+
+		const result = await conch.run("cmd", {
+			timeoutMs: 20,
+			strict: false,
+			backendError: "ignore",
+		});
+
+		expect(result.meta.method).toBe("fallback");
+		expect(result.exitCode).toBeUndefined();
+		expect(result.outputText).toContain("some output");
+
+		conch.dispose();
+	});
+
 	it("run() should allow snapshot: 'none'", async () => {
 		const backend = new MockBackend();
 		backend.write.mockImplementation((_data: string) => {

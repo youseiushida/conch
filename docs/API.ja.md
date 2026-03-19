@@ -8,7 +8,7 @@
 現状、主なクラスと関数は `src/index.ts` からexportされています。
 
 ```typescript
-import { Conch, ConchSession, LocalPty, waitForText, waitForStable } from '@ushida_yosei/conch';
+import { Conch, ConchSession, LocalPty, DockerPty, waitForText, waitForStable } from '@ushida_yosei/conch';
 ```
 
 ---
@@ -21,16 +21,21 @@ import { Conch, ConchSession, LocalPty, waitForText, waitForStable } from '@ushi
 
 #### `Conch.launch(options): Promise<Conch>`
 新しい Conch インスタンスを作成・起動します。
-- `options.backend`: `{ type: 'localPty', ... }` または `ITerminalBackend` インスタンス。
+- `options.backend`: `{ type: 'localPty' | 'docker', ... }` または `ITerminalBackend` インスタンス。
+- `options.shellIntegration`: 任意のOSC 133注入設定（`run()` の終了コード検知を安定させたい場合に推奨）。
+- `options.autoDispose`: trueの場合、プロセス終了シグナル時に自動でdisposeします。
 - `options.timeoutMs`: 操作のデフォルトタイムアウト。
 
 ### Methods
 
 #### `run(command: string, options?): Promise<RunResult>`
 コマンドを実行し、完了まで待機します。
-- OSC 133 (Shell Integration) が利用可能な場合、正確なコマンド完了を検知します。
-- 検知できない場合はタイムアウトまで待機します（fallbackモード）。
-- 終了コード、出力テキスト、スナップショットを返します。
+- OSC 133 (Shell Integration) が利用可能な場合、コマンド完了（OSC 133 D）と終了コードを検知します。
+- OSC 133 D が観測できない場合:
+  - `strict: false`（デフォルト）: `timeoutMs` 経過で解決し、`exitCode: undefined` になります（`meta.method: "fallback"`）。
+  - `strict: true`: タイムアウトでrejectします。
+- バックエンドが `ITerminalBackend.onError` で致命的エラーを通知する場合、`run()` はタイムアウトを待たずに失敗できます（デフォルト）。従来通りタイムアウトfallbackにしたい場合は `backendError: "ignore"` を指定します。
+- 終了コード（取得できる場合）、出力テキスト、スナップショット（`snapshot: "viewport" | "all" | "none"`）を返します。
 
 #### `pressAndSnapshot(key: string, options?): Promise<ActionResult>`
 キーを入力し、画面更新を待機します（デフォルト）。
@@ -60,6 +65,7 @@ export interface ITerminalBackend extends IDisposable {
   // ライフサイクル
   spawn(): Promise<void>;
   dispose(): void;
+  disposeAsync?(): Promise<void>;
 
   // I/O
   write(data: string): void;
@@ -68,10 +74,37 @@ export interface ITerminalBackend extends IDisposable {
   // イベント
   onData(listener: (data: string) => void): IDisposable;
   onExit(listener: (code: number, signal?: number) => void): IDisposable;
+  onError?(listener: (err: Error) => void): IDisposable;
 
   readonly id: string | number;
   readonly processName: string;
 }
+```
+
+### `BackendConfig`
+
+`Conch.launch({ backend: ... })` にバックエンド設定オブジェクトを渡せます:
+
+```ts
+export type BackendConfig =
+  | {
+      type: "localPty";
+      file?: string;
+      args?: string[];
+      cwd?: string;
+      env?: NodeJS.ProcessEnv;
+    }
+  | {
+      type: "docker";
+      image: string;
+      cmd?: string[];
+      workdir?: string;
+      env?: Record<string, string>;
+      name?: string;
+      user?: string;
+      autoRemove?: boolean;
+      docker?: import("dockerode").DockerOptions;
+    };
 ```
 
 ### Snapshot関連
@@ -155,6 +188,16 @@ PTYからの生データを受信します。
 プロセスを起動します。
 - Windows環境では `chcp 65001` によるUTF-8化と、画面クリアが完了するまで待機します。
 - 一度 `dispose` されたインスタンスで呼ぶとエラーになります。
+
+---
+
+## `src/backend/DockerPty.ts`（Backend: `DockerPty`）
+
+`dockerode` をラップした Docker コンテナ用バックエンドです。
+
+- コンテナをTTYモードで起動し、単一のread/writeストリームとしてattachします。
+- `autoRemove` はデフォルトで `true` です。
+- TTYモードでは stdout/stderr は単一ストリームにまとまります（分離できません）。
 
 ---
 

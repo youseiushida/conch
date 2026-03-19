@@ -57,7 +57,7 @@ export class Conch implements IDisposable {
 	 * Creates and launches a new Conch instance.
 	 */
 	public static async launch(options: ConchLaunchOptions): Promise<Conch> {
-		const backend = createBackend(options.backend, {
+		const backend = await createBackend(options.backend, {
 			cols: options.cols,
 			rows: options.rows,
 		});
@@ -430,6 +430,14 @@ export class Conch implements IDisposable {
 			rejectDone = reject;
 		});
 
+		const backendErrorMode = options.backendError ?? "reject";
+		const backendErrorDisp = this.backend.onError?.((err) => {
+			if (done) return;
+			if (backendErrorMode === "ignore") return;
+			done = true;
+			rejectDone?.(err);
+		});
+
 		const outputDisp = this.session.onOutput((data) => {
 			if (!done) raw += data;
 		});
@@ -465,6 +473,7 @@ export class Conch implements IDisposable {
 			clearTimeout(timeoutId);
 			outputDisp.dispose();
 			oscDisp.dispose();
+			backendErrorDisp?.dispose();
 		}
 
 		let snapshot: ISnapshot | undefined;
