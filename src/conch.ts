@@ -35,6 +35,7 @@ export class Conch implements IDisposable {
 	public readonly session: ConchSession;
 	public readonly backend: ITerminalBackend;
 	private readonly defaultTimeoutMs: number;
+	private _disposed = false;
 	/**
 	 * Serialize high-level actions per Conch instance.
 	 *
@@ -51,6 +52,12 @@ export class Conch implements IDisposable {
 		this.session = session;
 		this.backend = backend;
 		this.defaultTimeoutMs = options.timeoutMs ?? 10000;
+	}
+
+	private throwIfDisposed(): void {
+		if (this._disposed) {
+			throw new Error("Conch instance is disposed");
+		}
 	}
 
 	/**
@@ -97,52 +104,63 @@ export class Conch implements IDisposable {
 	}
 
 	public dispose(): void {
+		this._disposed = true;
 		this.session.dispose();
 	}
 
 	// --- Delegation Methods ---
 
 	public write(data: string): void {
+		this.throwIfDisposed();
 		this.session.write(data);
 	}
 
 	public execute(command: string): void {
+		this.throwIfDisposed();
 		this.session.execute(command);
 	}
 
 	public press(key: string): void {
+		this.throwIfDisposed();
 		this.session.press(key);
 	}
 
 	public type(text: string): void {
+		this.throwIfDisposed();
 		this.session.type(text);
 	}
 
 	public resize(cols: number, rows: number): void {
+		this.throwIfDisposed();
 		this.session.resize(cols, rows);
 	}
 
 	public getSnapshot(options?: SnapshotOptions): ISnapshot {
+		this.throwIfDisposed();
 		return this.session.getSnapshot(options);
 	}
 
 	public onOutput(listener: (data: string) => void): IDisposable {
+		this.throwIfDisposed();
 		return this.session.onOutput(listener);
 	}
 
 	public onExit(
 		listener: (code: number, signal?: number) => void,
 	): IDisposable {
+		this.throwIfDisposed();
 		return this.session.onExit(listener);
 	}
 
 	public onShellIntegration(
 		listener: (event: IShellIntegrationEvent) => void,
 	): IDisposable {
+		this.throwIfDisposed();
 		return this.session.onShellIntegration(listener);
 	}
 
 	public drain(): Promise<void> {
+		this.throwIfDisposed();
 		return this.session.drain();
 	}
 
@@ -152,6 +170,7 @@ export class Conch implements IDisposable {
 		pattern: string | RegExp,
 		options?: { timeoutMs?: number; intervalMs?: number },
 	): Promise<void> {
+		this.throwIfDisposed();
 		return waitForText(this.session, pattern, {
 			timeout: options?.timeoutMs ?? this.defaultTimeoutMs,
 			interval: options?.intervalMs,
@@ -162,6 +181,7 @@ export class Conch implements IDisposable {
 		durationMs?: number;
 		timeoutMs?: number;
 	}): Promise<void> {
+		this.throwIfDisposed();
 		return waitForSilence(
 			this.session,
 			options?.durationMs, // default handled in utils
@@ -173,6 +193,7 @@ export class Conch implements IDisposable {
 		timeoutMs?: number;
 		intervalMs?: number;
 	}): Promise<void> {
+		this.throwIfDisposed();
 		return waitForChange(this.session, {
 			timeout: options?.timeoutMs ?? this.defaultTimeoutMs,
 			interval: options?.intervalMs,
@@ -184,6 +205,7 @@ export class Conch implements IDisposable {
 		timeoutMs?: number;
 		intervalMs?: number;
 	}): Promise<void> {
+		this.throwIfDisposed();
 		return waitForStable(this.session, options?.durationMs, {
 			timeout: options?.timeoutMs ?? this.defaultTimeoutMs,
 			interval: options?.intervalMs,
@@ -202,6 +224,70 @@ export class Conch implements IDisposable {
 		// Other 2-char escapes like ESC ( or ESC )
 		// biome-ignore lint/suspicious/noControlCharactersInRegex: We intentionally match ESC to strip remaining ANSI escapes.
 		return withoutCsi.replace(/\x1b[@-Z\\-_]/g, "");
+	}
+
+	/**
+	 * Extract clean command output from raw captured data.
+	 *
+	 * With full OSC 133 integration (A/B/C/D), the raw stream looks like:
+	 *   ...[C marker][actual output][D marker]...
+	 *
+	 * C (CommandExecuted) fires just before the command runs (via DEBUG trap).
+	 * D (CommandFinished) fires at the next prompt (via PROMPT_COMMAND).
+	 * Content between the last C and last D is the command output — deterministic,
+	 * no heuristics needed.
+	 *
+	 * Falls back to D-only extraction (command echo heuristic) when C is absent,
+	 * and to full ANSI stripping when no markers are present at all.
+	 */
+	private static extractCommandOutput(
+		raw: string,
+		shellIntegrationUsed: boolean,
+		command?: string,
+	): string {
+		if (shellIntegrationUsed) {
+			// biome-ignore lint/suspicious/noControlCharactersInRegex: Matching OSC 133 C marker bytes.
+			const cRe = /\x1b\]133;C(?:\x07|\x1b\\)/g;
+			// biome-ignore lint/suspicious/noControlCharactersInRegex: Matching OSC 133 D marker bytes.
+			const dRe = /\x1b\]133;D;?[^\x07\x1b]*(?:\x07|\x1b\\)/g;
+
+			let lastCEnd = -1;
+			let lastDStart = -1;
+			let m: RegExpExecArray | null;
+
+			// biome-ignore lint/suspicious/noAssignInExpressions: Standard RegExp loop pattern.
+			while ((m = cRe.exec(raw)) !== null) {
+				lastCEnd = m.index + m[0].length;
+			}
+			// biome-ignore lint/suspicious/noAssignInExpressions: Standard RegExp loop pattern.
+			while ((m = dRe.exec(raw)) !== null) {
+				lastDStart = m.index;
+			}
+
+			// Primary path: C-D boundary extraction (deterministic).
+			if (lastCEnd >= 0 && lastDStart >= 0 && lastCEnd <= lastDStart) {
+				return Conch.stripAnsiAndOsc(raw.slice(lastCEnd, lastDStart));
+			}
+
+			// Legacy fallback: D-only extraction (no C marker).
+			// Uses command echo heuristic to strip the first line.
+			if (lastDStart >= 0) {
+				const stripped = Conch.stripAnsiAndOsc(raw.slice(0, lastDStart));
+				if (command) {
+					const cmdIdx = stripped.lastIndexOf(command);
+					if (cmdIdx >= 0) {
+						const afterCmd = stripped.slice(cmdIdx + command.length);
+						const nlIdx = afterCmd.indexOf("\n");
+						return nlIdx >= 0 ? afterCmd.slice(nlIdx + 1) : "";
+					}
+				}
+				const firstNl = stripped.indexOf("\n");
+				return firstNl >= 0 ? stripped.slice(firstNl + 1) : "";
+			}
+		}
+
+		// No markers: strip ANSI/OSC and return as-is.
+		return Conch.stripAnsiAndOsc(raw);
 	}
 
 	private async enqueueAction<T>(fn: () => Promise<T>): Promise<T> {
@@ -356,6 +442,7 @@ export class Conch implements IDisposable {
 		key: string,
 		options?: ConchActionOptions,
 	): Promise<ActionResult> {
+		this.throwIfDisposed();
 		return this.runActionAndSnapshot(
 			"press",
 			() => this.session.press(key),
@@ -367,17 +454,18 @@ export class Conch implements IDisposable {
 	/**
 	 * High-level action: type + (optional wait) + snapshot.
 	 *
-	 * Default: best-effort drain (fast for input bursts).
+	 * Default: wait for screen change (ensures PTY echo is reflected in snapshot).
 	 */
 	public typeAndSnapshot(
 		text: string,
 		options?: ConchActionOptions,
 	): Promise<ActionResult> {
+		this.throwIfDisposed();
 		return this.runActionAndSnapshot(
 			"type",
 			() => this.session.type(text),
 			options,
-			{ kind: "drain" },
+			{ kind: "change" },
 		);
 	}
 
@@ -390,6 +478,7 @@ export class Conch implements IDisposable {
 		command: string,
 		options?: ConchActionOptions,
 	): Promise<ActionResult> {
+		this.throwIfDisposed();
 		return this.runActionAndSnapshot(
 			"execute",
 			() => this.session.execute(command),
@@ -402,6 +491,7 @@ export class Conch implements IDisposable {
 		command: string,
 		options: RunOptions = {},
 	): Promise<RunResult> {
+		this.throwIfDisposed();
 		return this.enqueueAction(() => this.runInternal(command, options));
 	}
 
@@ -442,9 +532,25 @@ export class Conch implements IDisposable {
 			if (!done) raw += data;
 		});
 
+		// C-gate: ignore D events that arrive before either (a) our C marker or
+		// (b) we have issued the command. Residual D events from prior commands
+		// arrive before our execute() call. Our command's D arrives after.
+		//
+		// When C is available (bash with DEBUG trap): C fires → sawC=true → next D accepted.
+		// When C is absent (pwsh, legacy): commandIssued=true → next D accepted.
+		// Residual D's arrive before commandIssued is set → skipped.
+		let sawC = false;
+		let commandIssued = false;
+
 		const oscDisp = this.session.onShellIntegration((event) => {
 			if (done) return;
+			if (event.type === ShellIntegrationType.CommandExecuted) {
+				sawC = true;
+				return;
+			}
 			if (event.type !== ShellIntegrationType.CommandFinished) return;
+			// Skip residual D's: those that arrive before both C and execute().
+			if (!sawC && !commandIssued) return;
 
 			shellIntegrationUsed = true;
 			method = "osc133";
@@ -456,6 +562,7 @@ export class Conch implements IDisposable {
 
 		// Issue command AFTER hooks are attached.
 		this.session.execute(command);
+		commandIssued = true;
 
 		const timeoutId = setTimeout(() => {
 			if (done) return;
@@ -491,7 +598,7 @@ export class Conch implements IDisposable {
 		}
 
 		const durationMs = Date.now() - start;
-		const outputText = Conch.stripAnsiAndOsc(raw);
+		const outputText = Conch.extractCommandOutput(raw, shellIntegrationUsed, command);
 
 		return {
 			exitCode,
@@ -518,6 +625,7 @@ export class Conch implements IDisposable {
 	 * Returns the current text content of the viewport (or specified range).
 	 */
 	public screenText(options?: SnapshotOptions): string {
+		this.throwIfDisposed();
 		return this.getSnapshot(options).text;
 	}
 
@@ -525,6 +633,7 @@ export class Conch implements IDisposable {
 	 * Check if the specified pattern exists in the current screen snapshot.
 	 */
 	public hasText(pattern: string | RegExp, options?: SnapshotOptions): boolean {
+		this.throwIfDisposed();
 		const text = this.screenText(options);
 		if (typeof pattern === "string") {
 			return text.includes(pattern);
@@ -543,6 +652,7 @@ export class Conch implements IDisposable {
 		pattern: string | RegExp,
 		options?: SnapshotOptions,
 	): TextMatch[] {
+		this.throwIfDisposed();
 		const snapshot = this.getSnapshot(options);
 		return findText(snapshot, pattern);
 	}
@@ -551,6 +661,7 @@ export class Conch implements IDisposable {
 	 * Extract text from a specific rectangular region of the screen.
 	 */
 	public cropText(rect: Rect, options?: SnapshotOptions): string {
+		this.throwIfDisposed();
 		const snapshot = this.getSnapshot(options);
 		return cropText(snapshot, rect);
 	}

@@ -28,18 +28,47 @@ function prompt {
 }
 `;
 
-// Bash: Use PROMPT_COMMAND
-// OSC 133;A - Prompt Start
-// OSC 133;D - Command Finished
-// Fixes applied:
-// 1. Cleaner PROMPT_COMMAND appending using parameter expansion to avoid leading/trailing semicolons.
+// Bash: Full OSC 133 A/B/C/D integration
+//   A: Prompt Start        (PROMPT_COMMAND, before prompt display)
+//   B: Command Start       (appended to PS1, marks end of prompt / start of user input)
+//   C: Command Executed    (DEBUG trap, fires just before user command runs)
+//   D: Command Finished    (PROMPT_COMMAND, with $? exit code of previous command)
+//
+// The DEBUG trap fires before every simple command, including those inside
+// PROMPT_COMMAND. We use two guards to prevent spurious C emission:
+//   - __conch_cmd_executed: ensures C fires only once per command line
+//   - BASH_COMMAND check: skips our own internal functions
+//
+// PROMPT_COMMAND ordering: ours runs FIRST to capture $? before other
+// PROMPT_COMMAND entries can clobber it.
 export const BASH_INTEGRATION_SCRIPT = `
-__conch_prompt_start() {
-    printf "\\033]133;D;%s\\007" "$?"
+__conch_cmd_executed=""
+
+__conch_prompt_cmd() {
+    local __conch_ec="$?"
+    if [[ -n "$__conch_cmd_executed" ]]; then
+        printf "\\033]133;D;%s\\007" "$__conch_ec"
+    fi
+    __conch_cmd_executed=""
     printf "\\033]133;A\\007"
 }
 
-if [[ ! "$PROMPT_COMMAND" == *"__conch_prompt_start"* ]]; then
-    PROMPT_COMMAND="\${PROMPT_COMMAND:+$PROMPT_COMMAND; }__conch_prompt_start"
+if [[ ! "$PROMPT_COMMAND" == *"__conch_prompt_cmd"* ]]; then
+    PROMPT_COMMAND="__conch_prompt_cmd\${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
 fi
+
+if [[ ! "$PS1" == *'133;B'* ]]; then
+    PS1="\${PS1}\\[\\033]133;B\\007\\]"
+fi
+
+__conch_preexec() {
+    [[ -n "$__conch_cmd_executed" ]] && return
+    case "$BASH_COMMAND" in
+        __conch_prompt_cmd|__conch_preexec) return ;;
+    esac
+    __conch_cmd_executed=1
+    printf "\\033]133;C\\007"
+}
+
+trap '__conch_preexec' DEBUG
 `;

@@ -175,6 +175,9 @@ export class ConchSession implements IDisposable {
 		try {
 			// WSLなどの遅い環境を考慮してタイムアウトを長めに設定
 			await waitForText(this, sentinel, { timeout: 15000 });
+			// No pipeline flushing needed here. runInternal() uses a C-gate:
+			// it ignores any D events until it sees the C marker for its own
+			// command, making it immune to residual D/A/B events from setup.
 			return true;
 		} catch (e) {
 			console.warn("[ConchSession] Shell integration verification failed:", e);

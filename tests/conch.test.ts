@@ -20,10 +20,13 @@ describe("Conch (Facade)", () => {
 		conch.dispose();
 	});
 
-	it("run() should resolve with exitCode and stripped output when OSC133 D arrives", async () => {
+	it("run() should resolve with exitCode and stripped output when OSC133 C+D arrives", async () => {
 		const backend = new MockBackend();
 
 		backend.write.mockImplementation((_data: string) => {
+			// Full A/B/C/D flow: command echo → C → colored output → D
+			backend.emitData('echo "HELLO"\r\n');
+			backend.emitData("\x1b]133;C\x07");
 			backend.emitData("\x1b[31mHELLO\x1b[0m\r\n");
 			backend.emitData("\x1b]133;D;0\x07");
 		});
@@ -36,6 +39,7 @@ describe("Conch (Facade)", () => {
 		expect(result.meta.method).toBe("osc133");
 		expect(result.outputText).toContain("HELLO");
 		expect(result.outputText).not.toContain("\x1b");
+		expect(result.outputText).not.toContain('echo "HELLO"');
 		expect(result.snapshotAfter).toBeDefined();
 		expect(result.snapshotAfter?.text).toContain("HELLO");
 
@@ -99,6 +103,8 @@ describe("Conch (Facade)", () => {
 	it("run() should allow snapshot: 'none'", async () => {
 		const backend = new MockBackend();
 		backend.write.mockImplementation((_data: string) => {
+			backend.emitData("cmd\r\n");
+			backend.emitData("\x1b]133;C\x07");
 			backend.emitData("OK\r\n");
 			backend.emitData("\x1b]133;D;0\x07");
 		});
@@ -127,22 +133,27 @@ describe("Conch (Facade)", () => {
 		const p1 = conch.run("cmd1", { timeoutMs: 1000 });
 		const p2 = conch.run("cmd2", { timeoutMs: 1000 });
 
-		// Let the first queued run start.
-		await Promise.resolve();
+		// drain() in runInternal resolves immediately when queue is empty.
+		await new Promise((r) => setTimeout(r, 50));
 
-		// Only the first run should have executed immediately.
+		// Only the first run should have executed.
 		expect(writes).toHaveLength(1);
 		expect(writes[0]).toBe("cmd1\r");
 
-		// Complete cmd1
+		// Complete cmd1 with C+D
+		backend.emitData("cmd1\r\n");
+		backend.emitData("\x1b]133;C\x07");
 		backend.emitData("ONE\r\n");
 		backend.emitData("\x1b]133;D;1\x07");
 		const r1 = await p1;
 
-		// After cmd1 completes, cmd2 should start (write happens after listeners are attached).
+		// After cmd1 completes, cmd2 should start.
+		await new Promise((r) => setTimeout(r, 50));
 		expect(writes).toHaveLength(2);
 		expect(writes[1]).toBe("cmd2\r");
 
+		backend.emitData("cmd2\r\n");
+		backend.emitData("\x1b]133;C\x07");
 		backend.emitData("TWO\r\n");
 		backend.emitData("\x1b]133;D;2\x07");
 		const r2 = await p2;
@@ -165,7 +176,6 @@ describe("Conch (Facade)", () => {
 	it("pressAndSnapshot() should wait for change by default and return snapshot", async () => {
 		const backend = new MockBackend();
 		backend.write.mockImplementation((data: string) => {
-			// Enter key
 			if (data === "\r") {
 				backend.emitData("PRESSED\r\n");
 			}
@@ -184,7 +194,7 @@ describe("Conch (Facade)", () => {
 		conch.dispose();
 	});
 
-	it("typeAndSnapshot() should return snapshot (default: drain)", async () => {
+	it("typeAndSnapshot() should wait for change by default", async () => {
 		const backend = new MockBackend();
 		backend.write.mockImplementation((data: string) => {
 			backend.emitData(data);
@@ -195,10 +205,142 @@ describe("Conch (Facade)", () => {
 		const result = await conch.typeAndSnapshot("HELLO", { snapshot: "viewport" });
 
 		expect(result.meta.action).toBe("type");
-		expect(result.meta.waited).toBe("drain");
+		expect(result.meta.waited).toBe("change");
 		expect(result.snapshot.text).toContain("HELLO");
 
 		conch.dispose();
+	});
+
+	describe("dispose guard", () => {
+		it("should throw on sync methods after dispose", async () => {
+			const backend = new MockBackend();
+			const conch = await Conch.launch({ backend, timeoutMs: 50 });
+			conch.dispose();
+
+			expect(() => conch.execute("test")).toThrow("Conch instance is disposed");
+			expect(() => conch.write("test")).toThrow("Conch instance is disposed");
+			expect(() => conch.press("Enter")).toThrow("Conch instance is disposed");
+			expect(() => conch.type("test")).toThrow("Conch instance is disposed");
+			expect(() => conch.resize(100, 50)).toThrow("Conch instance is disposed");
+			expect(() => conch.getSnapshot()).toThrow("Conch instance is disposed");
+		});
+
+		it("should throw/reject on promise methods after dispose", async () => {
+			const backend = new MockBackend();
+			const conch = await Conch.launch({ backend, timeoutMs: 50 });
+			conch.dispose();
+
+			await expect(conch.run("test")).rejects.toThrow("Conch instance is disposed");
+			expect(() => conch.pressAndSnapshot("Enter")).toThrow("Conch instance is disposed");
+			expect(() => conch.typeAndSnapshot("test")).toThrow("Conch instance is disposed");
+			expect(() => conch.waitForText("x")).toThrow("Conch instance is disposed");
+			expect(() => conch.waitForSilence()).toThrow("Conch instance is disposed");
+			expect(() => conch.drain()).toThrow("Conch instance is disposed");
+		});
+	});
+
+	describe("extractCommandOutput", () => {
+		it("should extract C-D bounded output precisely", async () => {
+			const backend = new MockBackend();
+			backend.write.mockImplementation((_data: string) => {
+				// Full realistic flow: echo → C → output → D → A → prompt
+				backend.emitData('echo "hello"\r\n');
+				backend.emitData("\x1b]133;C\x07");
+				backend.emitData("hello\r\n");
+				backend.emitData("\x1b]133;D;0\x07");
+				backend.emitData("\x1b]133;A\x07$ ");
+			});
+
+			const conch = await Conch.launch({ backend, timeoutMs: 1000 });
+			const result = await conch.run('echo "hello"', { timeoutMs: 1000 });
+
+			expect(result.exitCode).toBe(0);
+			expect(result.outputText.trim()).toBe("hello");
+			expect(result.outputText).not.toContain('echo "hello"');
+			expect(result.outputText).not.toContain("$");
+
+			conch.dispose();
+		});
+
+		it("should handle residual output with multiple C-D pairs", async () => {
+			const backend = new MockBackend();
+			backend.write.mockImplementation((_data: string) => {
+				// Residual from prior command + our command's C-D
+				backend.emitData("residual junk\r\n");
+				backend.emitData("\x1b]133;C\x07");  // prior C (spurious)
+				backend.emitData("\x1b]133;D;0\x07"); // prior D
+				backend.emitData("\x1b]133;A\x07$ "); // prompt
+				backend.emitData('echo "real"\r\n');  // our command echo
+				backend.emitData("\x1b]133;C\x07");   // our C
+				backend.emitData("real output\r\n");  // our output
+				backend.emitData("\x1b]133;D;0\x07"); // our D
+			});
+
+			const conch = await Conch.launch({ backend, timeoutMs: 1000 });
+			const result = await conch.run('echo "real"', { timeoutMs: 1000 });
+
+			expect(result.outputText.trim()).toBe("real output");
+			expect(result.outputText).not.toContain("residual");
+			expect(result.outputText).not.toContain("$");
+			expect(result.outputText).not.toContain('echo "real"');
+
+			conch.dispose();
+		});
+
+		it("should fall back to D-only extraction when C is absent", async () => {
+			const backend = new MockBackend();
+			backend.write.mockImplementation((_data: string) => {
+				// No C marker — legacy/fallback path
+				backend.emitData('echo "fallback"\r\n');
+				backend.emitData("fallback output\r\n");
+				backend.emitData("\x1b]133;D;0\x07");
+			});
+
+			const conch = await Conch.launch({ backend, timeoutMs: 1000 });
+			const result = await conch.run('echo "fallback"', { timeoutMs: 1000 });
+
+			expect(result.outputText).toContain("fallback output");
+			expect(result.outputText).not.toContain('echo "fallback"');
+
+			conch.dispose();
+		});
+
+		it("should handle multi-line output in C-D boundaries", async () => {
+			const backend = new MockBackend();
+			backend.write.mockImplementation((_data: string) => {
+				backend.emitData("cmd\r\n");
+				backend.emitData("\x1b]133;C\x07");
+				backend.emitData("line1\r\nline2\r\nline3\r\n");
+				backend.emitData("\x1b]133;D;0\x07");
+			});
+
+			const conch = await Conch.launch({ backend, timeoutMs: 1000 });
+			const result = await conch.run("cmd", { timeoutMs: 1000 });
+
+			expect(result.outputText).toContain("line1");
+			expect(result.outputText).toContain("line2");
+			expect(result.outputText).toContain("line3");
+			expect(result.outputText).not.toContain("cmd");
+
+			conch.dispose();
+		});
+
+		it("should return empty string when command produces no output", async () => {
+			const backend = new MockBackend();
+			backend.write.mockImplementation((_data: string) => {
+				backend.emitData("true\r\n");
+				backend.emitData("\x1b]133;C\x07");
+				backend.emitData("\x1b]133;D;0\x07");
+			});
+
+			const conch = await Conch.launch({ backend, timeoutMs: 1000 });
+			const result = await conch.run("true", { timeoutMs: 1000 });
+
+			expect(result.outputText).toBe("");
+			expect(result.exitCode).toBe(0);
+
+			conch.dispose();
+		});
 	});
 
 	describe("Locator / Assertion Shortcuts", () => {
@@ -208,7 +350,7 @@ describe("Conch (Facade)", () => {
 
 			const conch = await Conch.launch({ backend });
 			conch.type("ABC");
-			await conch.drain(); // Wait for xterm to process
+			await conch.drain();
 
 			expect(conch.screenText()).toContain("ABC");
 			conch.dispose();
@@ -252,7 +394,6 @@ describe("Conch (Facade)", () => {
 			conch.type("12345");
 			await conch.drain();
 
-			// MockBackend sends raw chars, which xterm puts at (0,0)
 			const cropped = conch.cropText({ x: 0, y: 0, width: 3, height: 1 });
 			expect(cropped).toBe("123");
 
