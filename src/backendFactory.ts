@@ -43,7 +43,6 @@ export async function createBackend(
 	}
 
 	if (config.type === "docker") {
-		// Dynamic import: dockerode is only loaded when the Docker backend is actually used.
 		const { DockerPty } = await import("./backend/DockerPty");
 		return new DockerPty({
 			image: config.image,
@@ -54,6 +53,27 @@ export async function createBackend(
 			user: config.user,
 			autoRemove: config.autoRemove,
 			docker: config.docker,
+			cols: options.cols,
+			rows: options.rows,
+		});
+	}
+
+	if (config.type === "ssh") {
+		const { SshPty } = await import("./backend/SshPty");
+		return new SshPty({
+			host: config.host,
+			port: config.port,
+			username: config.username,
+			password: config.password,
+			privateKey: config.privateKey,
+			passphrase: config.passphrase,
+			agent: config.agent,
+			term: config.term,
+			readyTimeout: config.readyTimeout,
+			keepaliveInterval: config.keepaliveInterval,
+			keepaliveCountMax: config.keepaliveCountMax,
+			hostVerifier: config.hostVerifier,
+			connectOptions: config.connectOptions,
 			cols: options.cols,
 			rows: options.rows,
 		});

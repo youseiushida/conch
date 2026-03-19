@@ -20,8 +20,10 @@
     "build": "tsup",
     "prepare": "pnpm build",
     "prepack": "pnpm build",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test": "vitest run --exclude 'tests/e2e/**'",
+    "test:e2e": "vitest run tests/e2e/ --testTimeout 30000",
+    "test:all": "vitest run --testTimeout 30000",
+    "test:watch": "vitest --exclude 'tests/e2e/**'",
     "lint": "biome check src",
     "telnet": "chcp 65001 && telnet localhost 3007",
     "nc": "chcp 65001 && nc localhost 3007"
@@ -60,10 +62,14 @@
     "@xterm/headless": "^5.5.0"
   },
   "peerDependencies": {
-    "dockerode": "^4.0.9"
+    "dockerode": "^4.0.9",
+    "ssh2": "^1.17.0"
   },
   "peerDependenciesMeta": {
     "dockerode": {
+      "optional": true
+    },
+    "ssh2": {
       "optional": true
     }
   },
@@ -71,6 +77,8 @@
     "@biomejs/biome": "^2.3.8",
     "@types/dockerode": "^3.3.47",
     "@types/node": "^25.0.0",
+    "@types/ssh2": "^1.15.5",
+    "ssh2": "^1.17.0",
     "tsup": "^8.5.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",

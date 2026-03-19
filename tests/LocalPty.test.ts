@@ -65,7 +65,21 @@ describe('LocalPty', () => {
     it('spawn() on Windows should inject chcp 65001', async () => {
       (os.platform as Mock).mockReturnValue('win32');
       pty = new LocalPty('powershell.exe');
-      
+
+      // The new spawn() waits for a sentinel in onData. Mock the write
+      // to echo back any sentinel it receives via onData listeners.
+      let dataCallback: ((data: string) => void) | undefined;
+      mockPtyProcess.onData.mockImplementation((cb: (data: string) => void) => {
+        dataCallback = cb;
+        return { dispose: () => {} };
+      });
+      mockPtyProcess.write.mockImplementation((data: string) => {
+        // Echo back the sentinel when it's written
+        if (data.includes("__PTY_READY_")) {
+          setTimeout(() => dataCallback?.(data), 0);
+        }
+      });
+
       await pty.spawn();
 
       // Should write chcp 65001 and Clear-Host

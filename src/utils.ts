@@ -1,6 +1,13 @@
 import type { ConchSession } from "./session";
 import type { ISnapshot } from "./types";
 
+/**
+ * Budget for best-effort drain calls (ms). Lets xterm catch up with
+ * backend data before reading the buffer. Resolves immediately when
+ * the write queue is already empty.
+ */
+const DRAIN_BUDGET_MS = 25;
+
 export interface WaitOptions {
 	timeout?: number;
 	interval?: number;
@@ -50,7 +57,7 @@ export function waitForText(
 ): Promise<void> {
 	const timeout = options.timeout ?? 10000;
 	const interval = options.interval ?? 50;
-	const drainBudgetMs = Math.min(interval, 25);
+	const drainBudgetMs = Math.min(interval, DRAIN_BUDGET_MS);
 
 	return new Promise((resolve, reject) => {
 		let pollTimer: NodeJS.Timeout | undefined;
@@ -175,7 +182,7 @@ export function waitForChange(
 ): Promise<void> {
 	const timeout = options.timeout ?? 10000;
 	const interval = options.interval ?? 50;
-	const drainBudgetMs = Math.min(interval, 25);
+	const drainBudgetMs = Math.min(interval, DRAIN_BUDGET_MS);
 
 	return new Promise((resolve, reject) => {
 		let pollTimer: NodeJS.Timeout | undefined;
@@ -229,7 +236,7 @@ export function waitForStable(
 ): Promise<void> {
 	const timeout = options.timeout ?? 10000;
 	const interval = options.interval ?? 50;
-	const drainBudgetMs = Math.min(interval, 25);
+	const drainBudgetMs = Math.min(interval, DRAIN_BUDGET_MS);
 
 	return new Promise((resolve, reject) => {
 		let pollTimer: NodeJS.Timeout | undefined;

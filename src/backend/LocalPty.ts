@@ -43,7 +43,7 @@ export class LocalPty implements ITerminalBackend {
 		}
 
 		this.ptyProcess = pty.spawn(this.shell, this.args, {
-			name: "xterm-color",
+			name: "xterm-256color",
 			cols: this.options.cols ?? 80,
 			rows: this.options.rows ?? 24,
 			cwd: this.options.cwd ?? process.cwd(),
@@ -68,14 +68,24 @@ export class LocalPty implements ITerminalBackend {
 		if (os.platform() === "win32") {
 			const shellLower = this.shell.toLowerCase();
 			const isPowerShell = shellLower.includes("powershell") || shellLower.includes("pwsh");
-		
+
 			if (isPowerShell) {
-				// コードページをUTF-8に変更
-				this.write("chcp 65001\r");
-				// 画面クリア (chcpの出力メッセージを消すため)
-				this.write("Clear-Host\r");
-		
-				await new Promise((resolve) => setTimeout(resolve, 100));
+				// コードページをUTF-8に変更し、画面クリア
+				// sentinel を使って完了を検知（固定 sleep を回避）
+				const sentinel = `__PTY_READY_${Date.now()}`;
+				this.write(`chcp 65001; Clear-Host; Write-Output "${sentinel}"\r`);
+				await new Promise<void>((resolve) => {
+					const timeout = setTimeout(resolve, 5000);
+					let buf = "";
+					const disp = this.onData((data) => {
+						buf += data;
+						if (buf.includes(sentinel)) {
+							clearTimeout(timeout);
+							disp.dispose();
+							resolve();
+						}
+					});
+				});
 			}
 		}
 	}
@@ -87,7 +97,7 @@ export class LocalPty implements ITerminalBackend {
 	}
 
 	public get processName(): string {
-		return this.ptyProcess?.process ?? "";
+		return this.shell;
 	}
 
 	public write(data: string): void {

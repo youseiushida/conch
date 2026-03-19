@@ -1,14 +1,21 @@
 // OSC 133 Shell Integration Scripts
 
-// PowerShell: Wrap prompt to emit OSC 133
-// A: Prompt Start
-// B: Command Start (handled by PSReadLine usually, but we inject here for fallback)
-// C: Command Output Start (handled by preexec)
-// D: Command Finished (handled by prompt)
-// Note: PSReadLine integration is better for B/C, but this simple wrapper handles A/D which are critical for prompt detection.
-// Fixes applied:
-// 1. Use $function:prompt to save ScriptBlock correctly (Get-Content returns string).
-// 2. Use [Console]::Out.Write to avoid host dependencies (Write-Host).
+// PowerShell: Full OSC 133 A/B/C/D integration
+//   A: Prompt Start        (prompt function, before prompt display)
+//   B: Command Start       (prompt function, after prompt display)
+//   C: Command Executed    (PSReadLine Enter handler, fires just before AcceptLine)
+//   D: Command Finished    (prompt function, with $LASTEXITCODE of previous command)
+//
+// C is emitted via Set-PSReadLineKeyHandler for the Enter key.
+// PSReadLine intercepts the Enter keystroke before the command runs, making it
+// the natural place to emit C — equivalent to bash's DEBUG trap.
+//
+// If PSReadLine is unavailable (non-interactive / minimal environment), the
+// guard silently skips C registration. In that case run() will time out rather
+// than silently accept wrong output; use strict:false to tolerate it.
+//
+// The guard variable $global:__conch_psrl_hooked prevents double-registration
+// when enableShellIntegration is called more than once in the same session.
 export const PWSH_INTEGRATION_SCRIPT = `
 if (-not (Test-Path function:__original_prompt)) {
     if (Test-Path function:prompt) {
@@ -25,6 +32,16 @@ function prompt {
     [Console]::Out.Write("$([char]27)]133;A$([char]7)")
     & __original_prompt
     [Console]::Out.Write("$([char]27)]133;B$([char]7)")
+}
+
+if (-not $global:__conch_psrl_hooked) {
+    if (Get-Command Set-PSReadLineKeyHandler -ErrorAction SilentlyContinue) {
+        Set-PSReadLineKeyHandler -Key Enter -ScriptBlock {
+            [Console]::Out.Write("$([char]27)]133;C$([char]7)")
+            [Microsoft.PowerShell.PSConsoleReadLine]::AcceptLine()
+        }
+        $global:__conch_psrl_hooked = $true
+    }
 }
 `;
 

@@ -7,5 +7,5 @@ export default defineConfig({
 	clean: true,
 	sourcemap: true,
 	// @lydell/node-pty はバイナリを含むためバンドルから除外(必須)
-	external: ["@lydell/node-pty", "net"],
+	external: ["@lydell/node-pty", "net", "ssh2"],
 });

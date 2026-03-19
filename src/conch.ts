@@ -31,6 +31,21 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * How long the screen must remain unchanged after spawn before we consider the
+ * shell prompt "stable". Event-driven — resolves as soon as the condition is met.
+ */
+const POST_SPAWN_STABLE_MS = 100;
+const POST_SPAWN_TIMEOUT_MS = 2000;
+
+/**
+ * Budget for best-effort drain calls (ms). Used throughout wait/snapshot methods
+ * to let xterm catch up with the backend data before reading the buffer.
+ * Kept short to avoid blocking the event loop; drain resolves immediately if
+ * the xterm write queue is already empty.
+ */
+const DRAIN_BUDGET_MS = 25;
+
 export class Conch implements IDisposable {
 	public readonly session: ConchSession;
 	public readonly backend: ITerminalBackend;
@@ -77,8 +92,12 @@ export class Conch implements IDisposable {
 		// Spawn AFTER wiring session listeners (to avoid losing early output).
 		await backend.spawn();
 
-		// Wait for the process to stabilize a bit (important for slow backends like WSL)
-		await waitForStable(session, 100, { timeout: 2000 });
+		// Wait for the initial prompt to stabilize. The shell needs time to
+		// initialize (load .bashrc, display prompt). This is event-driven:
+		// resolves as soon as the screen content stops changing for the duration.
+		await waitForStable(session, POST_SPAWN_STABLE_MS, {
+			timeout: POST_SPAWN_TIMEOUT_MS,
+		});
 
 		const conch = new Conch(session, backend, {
 			timeoutMs: options.timeoutMs ?? options.timeout,
@@ -97,6 +116,18 @@ export class Conch implements IDisposable {
 			);
 			if (options.shellIntegration.strict && !ok) {
 				throw new Error("Shell integration enable failed");
+			}
+			if (ok) {
+				// Flush the pipeline with a no-op command. The shell integration
+				// setup leaves residual OSC events (D, A, B from the sentinel echo's
+				// prompt cycle) in the pipeline. This no-op run consumes them,
+				// ensuring the first user run() starts with a clean state.
+				// The no-op's own exit code/output are discarded.
+				await conch.run(":", {
+					timeoutMs: 10000,
+					strict: false,
+					snapshot: "none",
+				});
 			}
 		}
 
@@ -232,20 +263,21 @@ export class Conch implements IDisposable {
 	 * With full OSC 133 integration (A/B/C/D), the raw stream looks like:
 	 *   ...[C marker][actual output][D marker]...
 	 *
-	 * C (CommandExecuted) fires just before the command runs (via DEBUG trap).
-	 * D (CommandFinished) fires at the next prompt (via PROMPT_COMMAND).
-	 * Content between the last C and last D is the command output — deterministic,
-	 * no heuristics needed.
+	 * C (CommandExecuted) fires just before the command runs (bash: DEBUG trap,
+	 * pwsh: PSReadLine Enter handler). D (CommandFinished) fires at the next
+	 * prompt. Content between the last C and last D is the command output —
+	 * deterministic, no heuristics needed.
 	 *
-	 * Falls back to D-only extraction (command echo heuristic) when C is absent,
-	 * and to full ANSI stripping when no markers are present at all.
+	 * Falls back to full ANSI stripping when no markers are present at all
+	 * (shell integration not used or timed out).
 	 */
 	private static extractCommandOutput(
 		raw: string,
 		shellIntegrationUsed: boolean,
-		command?: string,
 	): string {
 		if (shellIntegrationUsed) {
+			const searchRegion = raw;
+
 			// biome-ignore lint/suspicious/noControlCharactersInRegex: Matching OSC 133 C marker bytes.
 			const cRe = /\x1b\]133;C(?:\x07|\x1b\\)/g;
 			// biome-ignore lint/suspicious/noControlCharactersInRegex: Matching OSC 133 D marker bytes.
@@ -256,33 +288,17 @@ export class Conch implements IDisposable {
 			let m: RegExpExecArray | null;
 
 			// biome-ignore lint/suspicious/noAssignInExpressions: Standard RegExp loop pattern.
-			while ((m = cRe.exec(raw)) !== null) {
+			while ((m = cRe.exec(searchRegion)) !== null) {
 				lastCEnd = m.index + m[0].length;
 			}
 			// biome-ignore lint/suspicious/noAssignInExpressions: Standard RegExp loop pattern.
-			while ((m = dRe.exec(raw)) !== null) {
+			while ((m = dRe.exec(searchRegion)) !== null) {
 				lastDStart = m.index;
 			}
 
-			// Primary path: C-D boundary extraction (deterministic).
+			// C-D boundary extraction (deterministic).
 			if (lastCEnd >= 0 && lastDStart >= 0 && lastCEnd <= lastDStart) {
-				return Conch.stripAnsiAndOsc(raw.slice(lastCEnd, lastDStart));
-			}
-
-			// Legacy fallback: D-only extraction (no C marker).
-			// Uses command echo heuristic to strip the first line.
-			if (lastDStart >= 0) {
-				const stripped = Conch.stripAnsiAndOsc(raw.slice(0, lastDStart));
-				if (command) {
-					const cmdIdx = stripped.lastIndexOf(command);
-					if (cmdIdx >= 0) {
-						const afterCmd = stripped.slice(cmdIdx + command.length);
-						const nlIdx = afterCmd.indexOf("\n");
-						return nlIdx >= 0 ? afterCmd.slice(nlIdx + 1) : "";
-					}
-				}
-				const firstNl = stripped.indexOf("\n");
-				return firstNl >= 0 ? stripped.slice(firstNl + 1) : "";
+				return Conch.stripAnsiAndOsc(searchRegion.slice(lastCEnd, lastDStart));
 			}
 		}
 
@@ -342,7 +358,7 @@ export class Conch implements IDisposable {
 	): Promise<void> {
 		const start = Date.now();
 		while (Date.now() - start < options.timeoutMs) {
-			await this.bestEffortDrain(Math.min(options.intervalMs, 25));
+			await this.bestEffortDrain(Math.min(options.intervalMs, DRAIN_BUDGET_MS));
 			const current = this.session.getSnapshot({ range }).text;
 			if (current !== baselineText) return;
 			await sleep(options.intervalMs);
@@ -363,7 +379,7 @@ export class Conch implements IDisposable {
 			// For change-waits, capture baseline BEFORE action (after best-effort drain).
 			let baselineText: string | undefined;
 			if (wait.kind === "change") {
-				await this.bestEffortDrain(25);
+				await this.bestEffortDrain(DRAIN_BUDGET_MS);
 				baselineText = this.session.getSnapshot({ range: snapshotRange }).text;
 			}
 
@@ -417,7 +433,7 @@ export class Conch implements IDisposable {
 			}
 
 			// Final snapshot (best-effort drain).
-			await this.bestEffortDrain(25);
+			await this.bestEffortDrain(DRAIN_BUDGET_MS);
 			const snapshot = this.session.getSnapshot({ range: snapshotRange });
 			const durationMs = Date.now() - start;
 
@@ -532,32 +548,45 @@ export class Conch implements IDisposable {
 			if (!done) raw += data;
 		});
 
-		// C-gate: ignore D events that arrive before either (a) our C marker or
-		// (b) we have issued the command. Residual D events from prior commands
-		// arrive before our execute() call. Our command's D arrives after.
+		// C-gate: precise event filtering for shell integration.
 		//
-		// When C is available (bash with DEBUG trap): C fires → sawC=true → next D accepted.
-		// When C is absent (pwsh, legacy): commandIssued=true → next D accepted.
-		// Residual D's arrive before commandIssued is set → skipped.
+		// Residual events from prior commands (e.g. enableShellIntegration setup)
+		// may arrive as: [residual A, B, C, D] ... [our C] ... [our D]
+		//
+		// Strategy:
+		//   - Only accept C events that arrive AFTER execute() (commandIssued=true).
+		//     Residual C events arrive before execute() and are ignored.
+		//   - Only accept D events that arrive AFTER our C (sawC=true).
+		//     Residual D events (even after execute) are ignored because they precede our C.
+		//   - D without C is ignored entirely. All supported shells must emit C
+		//     (bash: DEBUG trap, pwsh: PSReadLine Enter handler). A D without C
+		//     either belongs to a prior command or indicates shell integration is
+		//     partially set up; in either case we let run() time out rather than
+		//     silently accept wrong output.
 		let sawC = false;
 		let commandIssued = false;
 
 		const oscDisp = this.session.onShellIntegration((event) => {
 			if (done) return;
+
 			if (event.type === ShellIntegrationType.CommandExecuted) {
-				sawC = true;
+				// Only our command's C matters (arrives after execute).
+				if (commandIssued) sawC = true;
 				return;
 			}
-			if (event.type !== ShellIntegrationType.CommandFinished) return;
-			// Skip residual D's: those that arrive before both C and execute().
-			if (!sawC && !commandIssued) return;
 
-			shellIntegrationUsed = true;
-			method = "osc133";
-			const maybeCode = Number(event.params[0]);
-			exitCode = Number.isFinite(maybeCode) ? maybeCode : undefined;
-			done = true;
-			resolveDone?.();
+			if (event.type !== ShellIntegrationType.CommandFinished) return;
+
+			if (sawC) {
+				// D after our C — this is definitively our command's completion.
+				shellIntegrationUsed = true;
+				method = "osc133";
+				const maybeCode = Number(event.params[0]);
+				exitCode = Number.isFinite(maybeCode) ? maybeCode : undefined;
+				done = true;
+				resolveDone?.();
+			}
+			// D without preceding C: ignore (residual or partially-initialised shell).
 		});
 
 		// Issue command AFTER hooks are attached.
@@ -589,7 +618,7 @@ export class Conch implements IDisposable {
 			// Snapshot-after: best-effort drain so the screen is up-to-date.
 			const elapsedMs = Date.now() - start;
 			const remainingMs = Math.max(0, timeoutMs - elapsedMs);
-			const drainBudgetMs = Math.min(remainingMs, 250);
+			const drainBudgetMs = Math.min(remainingMs, DRAIN_BUDGET_MS);
 			await this.bestEffortDrain(drainBudgetMs);
 
 			const range = snapshotMode;
@@ -598,7 +627,7 @@ export class Conch implements IDisposable {
 		}
 
 		const durationMs = Date.now() - start;
-		const outputText = Conch.extractCommandOutput(raw, shellIntegrationUsed, command);
+		const outputText = Conch.extractCommandOutput(raw, shellIntegrationUsed);
 
 		return {
 			exitCode,

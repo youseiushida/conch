@@ -287,20 +287,22 @@ describe("Conch (Facade)", () => {
 			conch.dispose();
 		});
 
-		it("should fall back to D-only extraction when C is absent", async () => {
+		it("should time out and not use osc133 when D arrives without C", async () => {
+			// D-without-C is ignored — no stash/grace period. run() times out.
+			// This covers the case where shell integration is partially initialised
+			// (e.g. pwsh without PSReadLine, or a residual D from a prior command).
 			const backend = new MockBackend();
 			backend.write.mockImplementation((_data: string) => {
-				// No C marker — legacy/fallback path
-				backend.emitData('echo "fallback"\r\n');
-				backend.emitData("fallback output\r\n");
-				backend.emitData("\x1b]133;D;0\x07");
+				backend.emitData('Some-Command\r\n');
+				backend.emitData("some output\r\n");
+				backend.emitData("\x1b]133;D;0\x07"); // D with no preceding C
 			});
 
-			const conch = await Conch.launch({ backend, timeoutMs: 1000 });
-			const result = await conch.run('echo "fallback"', { timeoutMs: 1000 });
+			const conch = await Conch.launch({ backend, timeoutMs: 50 });
+			const result = await conch.run("Some-Command", { timeoutMs: 50, strict: false });
 
-			expect(result.outputText).toContain("fallback output");
-			expect(result.outputText).not.toContain('echo "fallback"');
+			expect(result.meta.method).toBe("fallback");
+			expect(result.exitCode).toBeUndefined();
 
 			conch.dispose();
 		});

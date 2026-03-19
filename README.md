@@ -20,6 +20,7 @@ Think of it as **"Playwright for Terminals"**.
 *   **Flakiness-Free Waits:** Built-in utilities like `waitForText`, `waitForSilence`, and `waitForStable` help you handle asynchronous terminal output reliably without random `sleep()`.
 *   **Human-like Input:** Simulate key presses (`Enter`, `Esc`, `Ctrl+C`) and typing naturally.
 *   **Snapshot Engine:** Capture the "visual" state of the terminal at any moment to verify what the user actually sees.
+*   **TUI App Support:** Built-in terminal query auto-responder (DA1, DA2, CPR, DECRQM) enables interactive TUI apps like vim, less, nano, and top to render correctly in headless mode.
 *   **Pluggable Backends:** Supports Local PTY and Docker today, and is extensible for SSH in the future.
 
 ## Using Conch as an LLM/Agent Foundation (CLI/TUI that doesn’t get stuck)
@@ -139,6 +140,80 @@ Notes:
 - Requires a reachable Docker daemon (Docker Desktop / dockerd).
 - In TTY mode, stdout/stderr are combined into a single stream.
 - Shell Integration (OSC 133) in Docker usually requires an image with `bash` and `cmd: ["bash"]` (default is `/bin/sh`).
+
+## SSH Backend (SshPty)
+
+You can run Conch against a remote server via SSH.
+
+```typescript
+import { Conch } from "@ushida_yosei/conch";
+import { readFileSync } from "fs";
+
+const conch = await Conch.launch({
+  backend: {
+    type: "ssh",
+    host: "example.com",
+    username: "user",
+    privateKey: readFileSync("/path/to/key"),
+    // or: password: "secret",
+    // or: agent: process.env.SSH_AUTH_SOCK,
+  },
+  cols: 80,
+  rows: 24,
+  timeoutMs: 30_000,
+  shellIntegration: { enable: true, strict: false },
+});
+
+try {
+  const r = await conch.run('echo "hello from SSH"');
+  console.log(r.outputText); // "hello from SSH"
+  console.log(r.exitCode);   // 0
+} finally {
+  conch.dispose();
+}
+```
+
+Notes:
+
+- Requires `ssh2` as a peer dependency: `npm install ssh2`
+- Supports password, private key (with passphrase), and SSH agent authentication.
+- Connection loss is treated as a fatal error (no auto-reconnect). Create a new instance to reconnect.
+- Shell Integration (OSC 133) works over SSH when the remote shell is bash.
+- Host key verification is disabled by default (automation use case). Pass `hostVerifier` for strict checking.
+
+## TUI Application Support
+
+Conch can drive interactive TUI applications (vim, less, nano, top, tmux) in headless mode. A built-in terminal query auto-responder handles the DA/CPR/DECRQM sequences that these apps send on startup.
+
+```typescript
+const conch = await Conch.launch({
+  backend: { type: "localPty", file: "bash", env: process.env },
+  cols: 80,
+  rows: 24,
+  timeoutMs: 30_000,
+});
+
+// Open vim, type text, save and quit
+conch.execute('vim --cmd "set t_RV=" /tmp/test.txt');
+await conch.waitForText("~", { timeoutMs: 5_000 }); // wait for vim UI
+
+conch.press("i");                        // insert mode
+conch.type("Hello from Conch!");
+conch.press("Escape");
+conch.type(":wq");
+conch.press("Enter");
+await conch.waitForStable({ durationMs: 500 });
+
+conch.dispose();
+```
+
+| Program | Status | Notes |
+|---------|--------|-------|
+| vim/vi | ✅ | Use `--cmd "set t_RV="` for instant rendering (otherwise ~4s delay due to PTY buffering) |
+| less | ✅ | Alternate buffer, search, PageDown all work |
+| nano | ✅ | Alternate buffer, text input, Ctrl+X quit all work |
+| top | ✅ | Batch mode (`-b -n 1`) works. Interactive mode works with delay |
+| tmux | ✅ | Session create/attach, commands inside tmux, session cleanup |
 
 ## Documentation
 

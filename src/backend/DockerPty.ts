@@ -139,30 +139,22 @@ export class DockerPty implements ITerminalBackend {
 
       // Close stream if it was created.
       if (stream) {
-        try {
-          stream.end();
-        } catch {
-          // ignore
+        try { stream.end(); } catch (e) {
+          console.debug("[DockerPty] rollback stream.end() failed:", e);
         }
         if (DockerPty.hasDestroy(stream)) {
-          try {
-            stream.destroy();
-          } catch {
-            // ignore
+          try { stream.destroy(); } catch (e) {
+            console.debug("[DockerPty] rollback stream.destroy() failed:", e);
           }
         }
       }
 
       if (container) {
-        try {
-          await container.stop({ t: 1 });
-        } catch {
-          // ignore
+        try { await container.stop({ t: 1 }); } catch (e) {
+          console.debug("[DockerPty] rollback container.stop() failed:", e);
         }
-        try {
-          await container.remove({ force: true });
-        } catch {
-          // ignore
+        try { await container.remove({ force: true }); } catch (e) {
+          console.debug("[DockerPty] rollback container.remove() failed:", e);
         }
       }
 
@@ -223,10 +215,14 @@ export class DockerPty implements ITerminalBackend {
           removeListener?: (event: string, fn: (...args: unknown[]) => void) => void;
         };
         if (this._streamDataHandler && s.removeListener) {
-          try { s.removeListener("data", this._streamDataHandler); } catch { /* ignore */ }
+          try { s.removeListener("data", this._streamDataHandler); } catch (e) {
+            console.debug("[DockerPty] removeListener(data) failed:", e);
+          }
         }
         if (this._streamErrorHandler && s.removeListener) {
-          try { s.removeListener("error", this._streamErrorHandler); } catch { /* ignore */ }
+          try { s.removeListener("error", this._streamErrorHandler); } catch (e) {
+            console.debug("[DockerPty] removeListener(error) failed:", e);
+          }
         }
         this._streamDataHandler = undefined;
         this._streamErrorHandler = undefined;
@@ -236,14 +232,14 @@ export class DockerPty implements ITerminalBackend {
       // Close using `end()` (typed) and call destroy when available at runtime.
       try {
         stream?.end();
-      } catch {
-        // ignore
+      } catch (e) {
+        console.debug("[DockerPty] stream.end() failed:", e);
       }
       if (DockerPty.hasDestroy(stream)) {
         try {
           stream.destroy();
-        } catch {
-          // ignore
+        } catch (e) {
+          console.debug("[DockerPty] stream.destroy() failed:", e);
         }
       }
       this.attachStream = undefined;
@@ -252,13 +248,13 @@ export class DockerPty implements ITerminalBackend {
         // stop then remove (remove is no-op when AutoRemove=true)
         try {
           await container.stop({ t: 1 });
-        } catch {
-          // ignore
+        } catch (e) {
+          console.debug("[DockerPty] container.stop() failed:", e);
         }
         try {
           await container.remove({ force: true });
-        } catch {
-          // ignore
+        } catch (e) {
+          console.debug("[DockerPty] container.remove() failed:", e);
         }
       }
       this.container = undefined;

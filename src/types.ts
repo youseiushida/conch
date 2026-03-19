@@ -106,9 +106,44 @@ export type BackendConfig =
 	user?: string;
 	autoRemove?: boolean;
 	docker?: import("dockerode").DockerOptions;
+  }
+| {
+	type: "ssh";
+	host: string;
+	port?: number;
+	username: string;
+	password?: string;
+	privateKey?: string | Buffer;
+	passphrase?: string;
+	agent?: string;
+	term?: string;
+	readyTimeout?: number;
+	keepaliveInterval?: number;
+	keepaliveCountMax?: number;
+	hostVerifier?: (key: Buffer) => boolean;
+	connectOptions?: Partial<import("ssh2").ConnectConfig>;
   };
-// | { type: 'ssh'; ... }
 
+/**
+ * Options for {@link Conch.launch}.
+ *
+ * ## TUI Application Support
+ *
+ * Conch includes a terminal query auto-responder that enables interactive TUI
+ * applications (vim, less, nano, top, etc.) to render correctly. These apps
+ * send terminal capability queries (DA1, DA2, CPR, DECRQM) on startup and
+ * block until the terminal responds — which xterm.js headless normally cannot
+ * do. Conch intercepts these queries and writes standard responses back to the
+ * PTY, unblocking the apps.
+ *
+ * **Verified TUI programs**: vim, less, nano, top, tmux.
+ *
+ * **vim note**: vim sends a `t_RV` query on startup that causes a ~4s delay
+ * before rendering due to PTY buffering. To get instant rendering:
+ * ```typescript
+ * conch.execute('vim --cmd "set t_RV=" file.txt');
+ * ```
+ */
 export interface ConchLaunchOptions {
 	cols?: number;
 	rows?: number;

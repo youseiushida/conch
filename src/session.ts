@@ -47,6 +47,19 @@ export class ConchSession implements IDisposable {
 
 		// 1-4. パイプライン接続: Backend -> xterm & Listeners
 		const dataDisposable = this.backend.onData((data) => {
+			// 0. Auto-respond to DECRQM (DEC Private Mode Report): ESC [ ? Ps $ p
+			// xterm.js's registerCsiHandler can't match the "$" intermediate byte,
+			// so we intercept it in the raw data stream. Response: ESC [ ? Ps ; 2 $ y
+			// (Pm=2 means "reset/not set" — safe default for all modes).
+			// biome-ignore lint/suspicious/noControlCharactersInRegex: Matching CSI DECRQM sequence.
+			const decrqmRe = /\x1b\[\?(\d+)\$p/g;
+			let decrqmMatch: RegExpExecArray | null;
+			// biome-ignore lint/suspicious/noAssignInExpressions: Standard RegExp loop pattern.
+			while ((decrqmMatch = decrqmRe.exec(data)) !== null) {
+				const mode = decrqmMatch[1];
+				this.backend.write(`\x1b[?${mode};2$y`);
+			}
+
 			// 1. xterm に流す（反映完了を追跡する）
 			this.pendingTerminalWrites++;
 			this.terminal.write(data, () => {
@@ -88,6 +101,70 @@ export class ConchSession implements IDisposable {
 			},
 		);
 		this.disposables.push(oscDisposable);
+
+		// Terminal query auto-responder.
+		//
+		// TUI apps (vim, less, nano) send terminal capability queries (DA1, DA2,
+		// CPR, DSR) on startup and block until the terminal responds. xterm.js
+		// headless parses these sequences but never writes responses back — it has
+		// no reference to the PTY. We intercept the queries here and write standard
+		// responses back to the backend, unblocking the TUI app.
+		this.registerTerminalResponders();
+	}
+
+	/**
+	 * Register auto-responders for standard terminal queries.
+	 *
+	 * These are well-defined protocol responses that any terminal emulator would
+	 * send. Without them, TUI apps block on startup waiting for answers that
+	 * never come from xterm.js headless.
+	 */
+	private registerTerminalResponders(): void {
+		// DA1 (Primary Device Attributes): ESC [ c
+		// Response: VT220-compatible — ESC [ ? 62 ; 22 c
+		const da1 = this.terminal.parser.registerCsiHandler(
+			{ final: "c" },
+			(params) => {
+				if (params.length === 0 || params[0] === 0) {
+					this.backend.write("\x1b[?62;22c");
+				}
+				return false; // let xterm also process
+			},
+		);
+		this.disposables.push(da1);
+
+		// DA2 (Secondary Device Attributes): ESC [ > c
+		// Response: xterm-compatible — ESC [ > 0 ; 0 ; 0 c
+		const da2 = this.terminal.parser.registerCsiHandler(
+			{ prefix: ">", final: "c" },
+			(params) => {
+				if (params.length === 0 || params[0] === 0) {
+					this.backend.write("\x1b[>0;0;0c");
+				}
+				return false;
+			},
+		);
+		this.disposables.push(da2);
+
+		// DSR (Device Status Report) / CPR (Cursor Position Report): ESC [ Ps n
+		//   Ps=5: DSR — respond ESC [ 0 n (terminal OK)
+		//   Ps=6: CPR — respond ESC [ row ; col R (cursor position, 1-based)
+		const dsr = this.terminal.parser.registerCsiHandler(
+			{ final: "n" },
+			(params) => {
+				if (params[0] === 5) {
+					// DSR: report "OK"
+					this.backend.write("\x1b[0n");
+				} else if (params[0] === 6) {
+					// CPR: report current cursor position (1-based)
+					const row = this.terminal.buffer.active.cursorY + 1;
+					const col = this.terminal.buffer.active.cursorX + 1;
+					this.backend.write(`\x1b[${row};${col}R`);
+				}
+				return false;
+			},
+		);
+		this.disposables.push(dsr);
 	}
 
 	// --- 2. Programmatic I/O API ---
@@ -175,9 +252,6 @@ export class ConchSession implements IDisposable {
 		try {
 			// WSLなどの遅い環境を考慮してタイムアウトを長めに設定
 			await waitForText(this, sentinel, { timeout: 15000 });
-			// No pipeline flushing needed here. runInternal() uses a C-gate:
-			// it ignores any D events until it sees the C marker for its own
-			// command, making it immune to residual D/A/B events from setup.
 			return true;
 		} catch (e) {
 			console.warn("[ConchSession] Shell integration verification failed:", e);
