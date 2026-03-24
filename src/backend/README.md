@@ -82,6 +82,18 @@ export interface ITerminalBackend extends IDisposable {
     - Shell Integration (OSC 133) works if the remote shell is `bash` or `pwsh`.
     - Connection tuning is available via `readyTimeout`, `keepaliveInterval`, `keepaliveCountMax`, and raw `connectOptions` for advanced ssh2 overrides.
 
+### `TmuxPty` (Planned)
+
+- **Dependency**: `node-pty` (existing) + `tmux` (system)
+- **Overview**: Connects to a tmux session via node-pty. The key behavioral difference from LocalPty: **`dispose()` = detach, not kill.** The tmux session survives and can be re-attached later.
+- **Key Features**:
+    - **Session Persistence**: `dispose()` disconnects the tmux client; the session remains alive on the tmux server.
+    - **Re-attach**: Launch a new Conch instance with the same session name to resume where you left off. tmux redraws the full screen on attach.
+    - **Human Debugging**: Run `tmux attach -t <session>` from another terminal to watch the agent's actions in real-time.
+    - **OSC 133 Passthrough**: Automatically sets `allow-passthrough on` (tmux 3.3+, session-scoped) so Shell Integration works through tmux.
+    - **destroyOnDispose**: Optional flag to kill the tmux session on dispose (behaves like LocalPty).
+- **Design**: See [`docs/TODO-tmux-pty.md`](../../docs/TODO-tmux-pty.md) for full specification.
+
 ## How to Add a New Backend
 
 To add custom backends, follow these steps:

@@ -22,7 +22,7 @@ Conch（コンク）は、ターミナルアプリケーションをプログラ
 *   **人間らしい入力:** `Enter`, `Esc`, `Ctrl+C` などのキー入力や、自然なタイピングをシミュレートできます。
 *   **スナップショットエンジン:** 任意のタイミングでターミナルの「見た目（Visual State）」を取得し、ユーザーが実際に何を見ているかを検証できます。
 *   **TUIアプリサポート:** ターミナルクエリ自動応答機能（DA1, DA2, CPR, DECRQM）を内蔵しており、vim, less, nano, top などの対話的TUIアプリをヘッドレスモードで正しく描画できます。
-*   **拡張可能なバックエンド:** Local PTY、Docker、SSH をサポート。さらに他のバックエンドにも拡張可能な設計です。
+*   **拡張可能なバックエンド:** Local PTY、Docker、SSH をサポート。tmux や WebSocket ベースのバックエンド（ttyd, GoTTY）も計画中です。
 
 ## LLM/エージェントがCLI/TUIを“止めずに”扱うための基盤として
 
@@ -224,9 +224,19 @@ conch.dispose();
 
 ## ロードマップ
 
-*   [ ] **Interaction Layer:** 外部エージェント（MCP, WebSocketサーバー等）と接続するための抽象インターフェース
-*   [x] **Shell Integration (OSC 133):** フル A/B/C/D 対応によるコマンド境界（完了イベント）と終了コードの検知
-*   [ ] **Telnet/SSH Server:** 自動操作中のセッションに人間が介入・監視できるサーバー機能
+### 実装済み
+*   [x] **Shell Integration (OSC 133):** フル A/B/C/D マーカー対応によるコマンド境界検知と終了コード取得。
+*   [x] **SSH Backend (SshPty):** パスワード、秘密鍵、SSH エージェントによるリモートホスト接続。
+
+### 計画中
+*   [ ] **TmuxPty バックエンド:** tmux セッションに接続し、`dispose() = detach` でセッションを永続化。Conch の xterm.js 精度と tmux のセッション管理を両取り。`tmux attach` で人間がデバッグ介入可能。
+*   [ ] **press 修飾キー対応:** `Alt+D`, `Ctrl+Shift+A`, `Shift+ArrowUp` 等のフルサポート（~170行）。
+*   [ ] **OSC 133 ライブラリ切り出し:** 純粋なパース/スクリプトロジックを `@ushida_yosei/exec-detector` として独立化。Conch 外からの再利用を可能に。
+*   [ ] **WebSocket バックエンド:** `TtydPty`（ttyd）、`GoTTYPty`（GoTTY）でブラウザベースのターミナル共有ツールに接続。
+*   [ ] **CLI (`conch run`):** ワンショットのコマンド実行で JSON 出力。xterm.js + OSC 133 フル対応、tmux 不要。セッション永続化が必要な場合は tmux を直接使用。
+*   [ ] **KubernetesPty バックエンド:** Kubernetes Pod に exec API（WebSocket + チャネルマルチプレクス）で直接接続。
+*   [ ] **マウスイベント:** マウス入力対応の TUI アプリに対するクリック・スクロール・ドラッグのシミュレーション。
+*   [ ] **Visual Snapshot:** ターミナル画面を色・属性情報付きで SVG/PNG にレンダリング。
 
 ## ライセンス
 

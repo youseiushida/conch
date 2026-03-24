@@ -20,7 +20,7 @@ This directory contains the core logic of Conch.
     - `cropText`, `findText`: Functions to extract information from snapshots.
     - `encodeScriptForShell`: Cross-platform (Linux/macOS) shell script injection helper.
 - **`backend/`**: Backend Adapters
-    - Contains backend implementations (`LocalPty`, `DockerPty`, `SshPty`).
+    - Contains backend implementations (`LocalPty`, `DockerPty`, `SshPty`). `TmuxPty` is planned.
 - **`index.ts`**: Entry Point
     - Exports the public API of the library.
 
@@ -35,6 +35,7 @@ graph TD
         LP[LocalPty]
         DP[DockerPty]
         SP[SshPty]
+        TP[TmuxPty 🔜]
     end
 
     subgraph Core [Conch Core]

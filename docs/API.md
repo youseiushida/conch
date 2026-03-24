@@ -26,7 +26,7 @@ The primary entry point for using the library. It wraps `ConchSession` and provi
 
 #### `Conch.launch(options): Promise<Conch>`
 Creates and starts a new Conch instance.
-- `options.backend`: `{ type: 'localPty' | 'docker' | 'ssh', ... }` or an `ITerminalBackend` instance.
+- `options.backend`: `{ type: 'localPty' | 'docker' | 'ssh', ... }` or an `ITerminalBackend` instance. (`'tmux'` type is planned.)
 - `options.shellIntegration`: Optional OSC 133 injection settings (recommended for reliable `run()` exit codes).
 - `options.autoDispose`: If true, disposes the session on process exit signals.
 - `options.timeoutMs`: Default timeout for operations (default: 10000).

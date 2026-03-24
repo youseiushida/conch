@@ -28,7 +28,7 @@ import { Conch, ConchSession, LocalPty, waitForText, waitForStable } from '@ushi
 
 #### `Conch.launch(options): Promise<Conch>`
 新しい Conch インスタンスを作成・起動します。
-- `options.backend`: `{ type: 'localPty' | 'docker' | 'ssh', ... }` または `ITerminalBackend` インスタンス。
+- `options.backend`: `{ type: 'localPty' | 'docker' | 'ssh', ... }` または `ITerminalBackend` インスタンス。（`'tmux'` タイプは計画中）
 - `options.shellIntegration`: 任意のOSC 133注入設定（`run()` の終了コード検知を安定させたい場合に推奨）。
 - `options.autoDispose`: trueの場合、プロセス終了シグナル時に自動でdisposeします。
 - `options.timeoutMs`: 操作のデフォルトタイムアウト（デフォルト: 10000）。

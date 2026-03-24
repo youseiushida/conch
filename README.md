@@ -21,7 +21,7 @@ Think of it as **"Playwright for Terminals"**.
 *   **Human-like Input:** Simulate key presses (`Enter`, `Esc`, `Ctrl+C`) and typing naturally.
 *   **Snapshot Engine:** Capture the "visual" state of the terminal at any moment to verify what the user actually sees.
 *   **TUI App Support:** Built-in terminal query auto-responder (DA1, DA2, CPR, DECRQM) enables interactive TUI apps like vim, less, nano, and top to render correctly in headless mode.
-*   **Pluggable Backends:** Supports Local PTY and Docker today, and is extensible for SSH in the future.
+*   **Pluggable Backends:** Supports Local PTY, Docker, and SSH. Designed for extensibility — tmux and WebSocket-based backends (ttyd, GoTTY) are planned.
 
 ## Using Conch as an LLM/Agent Foundation (CLI/TUI that doesn’t get stuck)
 
@@ -223,9 +223,19 @@ conch.dispose();
 
 ## Roadmap
 
-*   [ ] **Interaction Layer:** Abstract interface for connecting external agents (MCP, WebSocket servers).
-*   [x] **Shell Integration (OSC 133):** Detect command completion events and exit codes.
-*   [ ] **Telnet/SSH Server:** Built-in server to allow human intervention or monitoring of automated sessions.
+### Implemented
+*   [x] **Shell Integration (OSC 133):** Full A/B/C/D marker support for command boundary detection and exit codes.
+*   [x] **SSH Backend (SshPty):** Connect to remote hosts via SSH with password, key, or agent authentication.
+
+### In Progress / Planned
+*   [ ] **TmuxPty Backend:** Connect to tmux sessions with `dispose() = detach` semantics. Combines Conch's xterm.js precision with tmux's session persistence. Human debugging via `tmux attach`.
+*   [ ] **Press Modifier Keys:** Full support for `Alt+D`, `Ctrl+Shift+A`, `Shift+ArrowUp`, etc. (~170 lines)
+*   [ ] **OSC 133 Library Extraction:** Extract pure parsing/script logic into `@ushida_yosei/exec-detector` for reuse outside Conch.
+*   [ ] **WebSocket Backends:** `TtydPty` (ttyd), `GoTTYPty` (GoTTY) for browser-based terminal sharing tools.
+*   [ ] **CLI (`conch run`):** One-shot command execution with JSON output. Full xterm.js + OSC 133 support, no tmux required. For session persistence, use tmux directly.
+*   [ ] **KubernetesPty Backend:** Direct connection to Kubernetes pods via the exec API (WebSocket + channel multiplexing).
+*   [ ] **Mouse Events:** Click, scroll, drag simulation for TUI apps that support mouse input.
+*   [ ] **Visual Snapshot:** Render terminal screen as SVG/PNG with color and attribute information.
 
 ## License
 
