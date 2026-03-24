@@ -1,3 +1,4 @@
+import { extractCommandOutput } from "termosc";
 import { createBackend } from "./backendFactory";
 import { ConchSession } from "./session";
 import type {
@@ -244,67 +245,6 @@ export class Conch implements IDisposable {
 	}
 
 	// --- High-level API ---
-
-	private static stripAnsiAndOsc(input: string): string {
-		// OSC: ESC ] ... BEL  OR  ESC ] ... ST (ESC \)
-		// biome-ignore lint/suspicious/noControlCharactersInRegex: We intentionally match ESC/BEL to strip OSC sequences.
-		const withoutOsc = input.replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, "");
-		// CSI: ESC [ ... command
-		// biome-ignore lint/suspicious/noControlCharactersInRegex: We intentionally match ESC to strip CSI sequences.
-		const withoutCsi = withoutOsc.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
-		// Other 2-char escapes like ESC ( or ESC )
-		// biome-ignore lint/suspicious/noControlCharactersInRegex: We intentionally match ESC to strip remaining ANSI escapes.
-		return withoutCsi.replace(/\x1b[@-Z\\-_]/g, "");
-	}
-
-	/**
-	 * Extract clean command output from raw captured data.
-	 *
-	 * With full OSC 133 integration (A/B/C/D), the raw stream looks like:
-	 *   ...[C marker][actual output][D marker]...
-	 *
-	 * C (CommandExecuted) fires just before the command runs (bash: DEBUG trap,
-	 * pwsh: PSReadLine Enter handler). D (CommandFinished) fires at the next
-	 * prompt. Content between the last C and last D is the command output —
-	 * deterministic, no heuristics needed.
-	 *
-	 * Falls back to full ANSI stripping when no markers are present at all
-	 * (shell integration not used or timed out).
-	 */
-	private static extractCommandOutput(
-		raw: string,
-		shellIntegrationUsed: boolean,
-	): string {
-		if (shellIntegrationUsed) {
-			const searchRegion = raw;
-
-			// biome-ignore lint/suspicious/noControlCharactersInRegex: Matching OSC 133 C marker bytes.
-			const cRe = /\x1b\]133;C(?:\x07|\x1b\\)/g;
-			// biome-ignore lint/suspicious/noControlCharactersInRegex: Matching OSC 133 D marker bytes.
-			const dRe = /\x1b\]133;D;?[^\x07\x1b]*(?:\x07|\x1b\\)/g;
-
-			let lastCEnd = -1;
-			let lastDStart = -1;
-			let m: RegExpExecArray | null;
-
-			// biome-ignore lint/suspicious/noAssignInExpressions: Standard RegExp loop pattern.
-			while ((m = cRe.exec(searchRegion)) !== null) {
-				lastCEnd = m.index + m[0].length;
-			}
-			// biome-ignore lint/suspicious/noAssignInExpressions: Standard RegExp loop pattern.
-			while ((m = dRe.exec(searchRegion)) !== null) {
-				lastDStart = m.index;
-			}
-
-			// C-D boundary extraction (deterministic).
-			if (lastCEnd >= 0 && lastDStart >= 0 && lastCEnd <= lastDStart) {
-				return Conch.stripAnsiAndOsc(searchRegion.slice(lastCEnd, lastDStart));
-			}
-		}
-
-		// No markers: strip ANSI/OSC and return as-is.
-		return Conch.stripAnsiAndOsc(raw);
-	}
 
 	private async enqueueAction<T>(fn: () => Promise<T>): Promise<T> {
 		let release: (() => void) | undefined;
@@ -642,7 +582,7 @@ export class Conch implements IDisposable {
 		}
 
 		const durationMs = Date.now() - start;
-		const outputText = Conch.extractCommandOutput(raw, shellIntegrationUsed);
+		const outputText = extractCommandOutput(raw, shellIntegrationUsed);
 
 		return {
 			exitCode,

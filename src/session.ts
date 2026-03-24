@@ -1,4 +1,5 @@
 import { Terminal } from "@xterm/headless";
+import { parseOsc133 } from "termosc";
 import { getCtrlChar, SpecialKeys } from "./keymap";
 import { BASH_INTEGRATION_SCRIPT, PWSH_INTEGRATION_SCRIPT } from "./scripts";
 import type {
@@ -458,28 +459,8 @@ export class ConchSession implements IDisposable {
 	 * Format: 133 ; TYPE [; Params...]
 	 */
 	private handleOsc133(data: string): void {
-		const parts = data.split(";");
-		const rawType = parts[0];
-		// Only emit known event types. Ignore unknown/extended markers for stability.
-		// This keeps `onShellIntegration` predictable for consumers (esp. run()).
-		switch (rawType) {
-			case ShellIntegrationType.PromptStart:
-			case ShellIntegrationType.CommandStart:
-			case ShellIntegrationType.CommandExecuted:
-			case ShellIntegrationType.CommandFinished:
-				break;
-			default:
-				return;
-		}
-
-		const type = rawType as ShellIntegrationType;
-		const params = parts.slice(1);
-
-		const event: IShellIntegrationEvent = {
-			type,
-			params,
-		};
-
+		const event = parseOsc133(data);
+		if (!event) return;
 		this.shellIntegrationListeners.forEach((listener) => {
 			listener(event);
 		});

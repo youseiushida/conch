@@ -73,18 +73,9 @@ export interface ISnapshot {
 }
 
 // --- Shell Integration Types (OSC 133) ---
-
-export enum ShellIntegrationType {
-	PromptStart = "A",
-	CommandStart = "B",
-	CommandExecuted = "C",
-	CommandFinished = "D",
-}
-
-export interface IShellIntegrationEvent {
-	type: ShellIntegrationType;
-	params: string[];
-}
+// Re-exported from termosc for backward compatibility.
+export { ShellIntegrationType } from "termosc";
+export type { IShellIntegrationEvent } from "termosc";
 
 // --- High Level API Types (Conch) ---
 

@@ -20,7 +20,7 @@
     "build": "tsup",
     "prepare": "pnpm build",
     "prepack": "pnpm build",
-    "test": "vitest run --exclude 'tests/e2e/**'",
+    "test": "vitest run --exclude 'tests/e2e/**' --exclude 'packages/**/tests/e2e/**'",
     "test:e2e": "vitest run tests/e2e/ --testTimeout 30000",
     "test:all": "vitest run --testTimeout 30000",
     "test:watch": "vitest --exclude 'tests/e2e/**'",
@@ -59,6 +59,7 @@
   },
   "dependencies": {
     "@lydell/node-pty": "1.1.0",
+    "termosc": "workspace:*",
     "@xterm/headless": "^5.5.0"
   },
   "peerDependencies": {
